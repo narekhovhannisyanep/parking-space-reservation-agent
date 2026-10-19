@@ -4,3 +4,8 @@
 
 # LangGraph
 .langgraph_api/
+
+.env
+
+.codemie/
+.claude/
