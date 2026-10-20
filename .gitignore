@@ -2,10 +2,18 @@
 # website: https://www.langchain.com/
 # website: https://www.langchain.com/langgraph
 
+# Python virtual environment
+.venv/
+
 # LangGraph
 .langgraph_api/
 
 .env
 
+# Codemie configuration files
 .codemie/
+AGENTS.local.md
+
+# Claude Code configuration files
 .claude/
+CLAUDE.local.md
