@@ -10,9 +10,6 @@ dependencies = []
 target-version = "py312"
 line-length = 120
 
-[tool.ruff.lint]
-select = ["A", "B", "C4", "F", "I", "UP"]
-
 [tool.ruff.format]
 quote-style = "double"
 indent-style = "space"
