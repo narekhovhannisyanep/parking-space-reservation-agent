@@ -1,19 +1,31 @@
-# gitignore template for LangChain products, e.g., LangGraph, LangSmith
-# website: https://www.langchain.com/
-# website: https://www.langchain.com/langgraph
-
-# Python virtual environment
+# Virtual environments
 .venv/
 
-# LangGraph
+# Python caches and compiled bytecode
+__pycache__/
+*.pyc
+*.pyd
+*.pyo
+
+# Ruff LInt & Format Cache
+.ruff_cache/
+
+# Jupyter Notebook Caches & Checkpoints
+.ipynb_checkpoints/
+*/.ipynb_checkpoints/
+
+# Environment Variables
+.env
+.env.*
+!.env.example
+
+# LangGraph / LangSmith Local State
 .langgraph_api/
 
-.env
 
 # Codemie configuration files
 .codemie/
 AGENTS.local.md
 
 # Claude Code configuration files
-.claude/
 CLAUDE.local.md
