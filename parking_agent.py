@@ -2,19 +2,33 @@
 
 import asyncio
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from threading import Lock
-from typing import Literal
+from typing import Annotated, Literal
 
-from langchain.messages import SystemMessage
 from langchain_core.language_models.chat_models import BaseChatModel
+from langchain_core.messages import AnyMessage, BaseMessage, SystemMessage
 from langchain_core.runnables import RunnableConfig, RunnableLambda
 from langchain_openai import AzureChatOpenAI
 from langgraph.checkpoint.base import BaseCheckpointSaver
-from langgraph.graph import END, START, MessagesState, StateGraph
+from langgraph.graph import END, START, StateGraph
+from langgraph.graph.message import add_messages
 from langgraph.graph.state import CompiledStateGraph
+from openai import APIError, OpenAIError
+from pydantic import ValidationError
 
 from commons.constants import DIAL_GPT_LUNA_6, SYSTEM_PROMPT
+
+
+@dataclass
+class ParkingState:
+    """Thread-scoped messages with LangGraph's append/update-by-ID semantics.
+
+    A dataclass satisfies StateGraph's schema bound in ty without casting or
+    suppressing the TypedDict protocol incompatibility of MessagesState.
+    """
+
+    messages: Annotated[list[AnyMessage], add_messages] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -57,38 +71,40 @@ class ParkingSpaceReservationAgent:
         # Import/graph construction stays offline; concurrent first runs share one client.
         with self._initialization_lock:
             if self._llm_client is None:
-                self._llm_client = AzureChatOpenAI(
-                    azure_deployment=self.config.deployment,
-                    reasoning_effort=self.config.reasoning_effort,
-                    temperature=self.config.temperature,
-                    timeout=self.config.timeout,
-                    max_retries=self.config.max_retries,
-                )
+                try:
+                    self._llm_client = AzureChatOpenAI(
+                        azure_deployment=self.config.deployment,
+                        reasoning_effort=self.config.reasoning_effort,
+                        temperature=self.config.temperature,
+                        timeout=self.config.timeout,
+                        max_retries=self.config.max_retries,
+                    )
+                except (ValidationError, OpenAIError):
+                    raise RuntimeError("Unable to initialize the model. Check the model configuration.") from None
             return self._llm_client
 
-    def _assistant(self, state: MessagesState, config: RunnableConfig) -> dict:
+    def _assistant(self, state: ParkingState, config: RunnableConfig) -> dict[str, list[BaseMessage]]:
+        model = self._get_llm_client()
+        messages = [SystemMessage(self.config.system_prompt), *state.messages]
         try:
-            response = self._get_llm_client().invoke(
-                [SystemMessage(self.config.system_prompt), *state["messages"]], config=config
-            )
-        except Exception:
+            response = model.invoke(messages, config=config)
+        except APIError:
             # Avoid including raw provider errors in the graph's user-facing error.
             raise RuntimeError("Unable to get a response. Check the model configuration or retry the run.") from None
         return {"messages": [response]}
 
-    async def _aassistant(self, state: MessagesState, config: RunnableConfig) -> dict:
+    async def _aassistant(self, state: ParkingState, config: RunnableConfig) -> dict[str, list[BaseMessage]]:
+        # Client construction can block; model requests use the native async API.
+        model = await asyncio.to_thread(self._get_llm_client)
+        messages = [SystemMessage(self.config.system_prompt), *state.messages]
         try:
-            # Client construction can block; model requests use the native async API.
-            model = await asyncio.to_thread(self._get_llm_client)
-            response = await model.ainvoke(
-                [SystemMessage(self.config.system_prompt), *state["messages"]], config=config
-            )
-        except Exception:
+            response = await model.ainvoke(messages, config=config)
+        except APIError:
             raise RuntimeError("Unable to get a response. Check the model configuration or retry the run.") from None
         return {"messages": [response]}
 
     def _build_graph(self, checkpointer: BaseCheckpointSaver | None) -> CompiledStateGraph:
-        builder = StateGraph(MessagesState)
+        builder = StateGraph(ParkingState)
         builder.add_node("assistant", RunnableLambda(self._assistant, afunc=self._aassistant))
         builder.add_edge(START, "assistant")
         builder.add_edge("assistant", END)

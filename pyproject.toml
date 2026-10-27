@@ -23,6 +23,7 @@ quote-style = "double"
 indent-style = "space"
 
 [tool.ruff.lint]
+extend-select = ["BLE001"]
 unfixable = ["F401"]
 
 [tool.ty]

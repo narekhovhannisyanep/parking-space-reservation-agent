@@ -18,9 +18,12 @@ class AppTests(unittest.TestCase):
         self.assertIn("messages", app.agent.get_input_jsonschema()["properties"])
 
     def test_import_has_no_environment_loading_client_or_terminal_side_effects(self):
-        with patch("dotenv.load_dotenv") as load, patch("parking_agent.AzureChatOpenAI") as client:
-            with patch("builtins.input") as terminal:
-                namespace = runpy.run_path(app.__file__)
+        with (
+            patch("dotenv.load_dotenv") as load,
+            patch("parking_agent.AzureChatOpenAI") as client,
+            patch("builtins.input") as terminal,
+        ):
+            namespace = runpy.run_path(app.__file__)
         load.assert_not_called()
         client.assert_not_called()
         terminal.assert_not_called()

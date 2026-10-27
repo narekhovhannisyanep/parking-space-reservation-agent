@@ -47,6 +47,9 @@ public customer interface: it provides access to thread state and debugging tool
   in server runs, with a 60-second timeout and up to two automatic retries.
 - Conversation and future per-request reservation state belong in LangGraph state,
   scoped to a thread, **not** mutable attributes shared by all users on the class.
+  `ParkingState` is a dataclass with a `messages` field and the `add_messages` reducer,
+  retaining the same messages-based API/Studio schema and update-by-ID behavior.
+  This avoids the `MessagesState` TypedDict protocol-bound incompatibility in `ty`.
   The class owns resources and workflow code; it is not a third orchestrator LLM.
 - Future vector storage/retrieval helpers for static facts and SQL services for
   dynamic data will be initialized and owned by this class. The split is the chosen
@@ -69,6 +72,8 @@ Studio can still connect with tracing disabled. This does not prevent sending in
 to your model provider or saving them in local checkpoints. If you enable tracing,
 prompts, responses, and personal data may also be stored in LangSmith. Sanitized
 graph errors do not replace access controls, checkpoint protection, or trace redaction.
+Only expected OpenAI API and client-configuration errors are sanitized; programming
+errors propagate so they can be diagnosed rather than silently masked.
 
 ## System prompt
 
@@ -88,6 +93,17 @@ With the project dependencies installed in `.venv`, run:
 These checks cover the CLI export, shared configuration/client lifecycle, sync and
 async graph execution, thread isolation, sanitized errors, and the prompt contract.
 They do not make API calls or evaluate live model behavior, retrieval accuracy, or security enforcement.
+
+Type, source lint, and formatting checks can run through uv's temporary tool environments
+without changing the project dependencies:
+
+```bash
+uv tool run ty check
+uv tool run ruff check app.py parking_agent.py commons tests
+uv tool run ruff format --check app.py parking_agent.py commons tests
+```
+
+Ruff enables `BLE001` to prevent broad exception catches from returning.
 
 References: [local server](https://docs.langchain.com/langsmith/local-server),
 [Studio setup](https://docs.langchain.com/langsmith/quick-start-studio), and

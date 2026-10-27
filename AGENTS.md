@@ -17,7 +17,9 @@
   Agent Server supplies checkpoint persistence; the export does not install a custom checkpointer.
   Models/checkpointers can be injected for tests. Imports do not load `.env`, initialize clients,
   or create databases; CLI loads `.env` and clients initialize lazily once per instance.
-  Sync/async nodes omit raw provider details from graph errors; traces/checkpoints still need protection.
+  Expected provider/configuration failures are sanitized; unexpected programming errors propagate.
+  Traces/checkpoints still need protection. `ParkingState` uses a dataclass and `add_messages`
+  to preserve the messages API/Studio schema while avoiding ty's TypedDict protocol-bound error.
 
 ## Persistent project context
 - Keep project requirements, accepted decisions with rationale, current status, and
@@ -125,11 +127,6 @@
 - Document new decisions without turning optional specification examples into requirements.
 - Retain LICENSE (MIT) and existing copyright notices.
 
-## Build, lint, and test commands
-- Local graph server: `.venv/bin/langgraph dev`; interact via LangSmith Studio.
-- Offline checks: `.venv/bin/python -m unittest discover -s tests -v`.
-  They verify graph export, class lifecycle/config, sync/async execution, thread isolation, and prompt coverage,
-  not live LLM behavior or application-level security enforcement.
-- Ruff and ty settings exist in pyproject.toml; no build or CI checks are configured.
-- When tooling is introduced, record verified commands here and setup in README.md.
-  Automated unit tests remain additional credit; Stage 4 workflow/load testing is required.
+## Development references
+- Setup, Studio usage, and verification commands: README.md.
+- Lint/format and type-checker configuration: pyproject.toml.

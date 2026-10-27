@@ -12,9 +12,10 @@ from langchain.messages import AIMessage, HumanMessage
 from langchain_core.runnables import RunnableConfig
 from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.errors import NodeCancelledError
+from openai import APIError, OpenAIError
 
 from commons.constants import DIAL_GPT_LUNA_6
-from parking_agent import AgentConfig, ParkingSpaceReservationAgent
+from parking_agent import AgentConfig, ParkingSpaceReservationAgent, ParkingState
 
 
 class ConfigTests(unittest.TestCase):
@@ -27,8 +28,9 @@ class ConfigTests(unittest.TestCase):
 
     def test_shared_settings_are_immutable(self):
         config = AgentConfig()
-        with self.assertRaises(FrozenInstanceError):
-            setattr(config, "deployment", "changed")
+        for field_name in ("deployment", "system_prompt", "reasoning_effort", "temperature", "timeout", "max_retries"):
+            with self.subTest(field=field_name), self.assertRaises(FrozenInstanceError):
+                setattr(config, field_name, None)
 
 
 class AgentTests(unittest.TestCase):
@@ -87,7 +89,10 @@ class AgentTests(unittest.TestCase):
 
     def test_provider_error_is_sanitized_and_recovery_is_possible(self):
         model = Mock()
-        model.invoke.side_effect = [ValueError("private-api-key"), AIMessage(content="Recovered")]
+        model.invoke.side_effect = [
+            APIError("private-api-key", request=Mock(), body=None),
+            AIMessage(content="Recovered"),
+        ]
         graph = ParkingSpaceReservationAgent(llm_client=model).graph
         with self.assertRaisesRegex(RuntimeError, "Unable to get a response") as error:
             graph.invoke({"messages": [HumanMessage(content="Hi")]})
@@ -100,12 +105,53 @@ class AgentTests(unittest.TestCase):
     def test_failed_initialization_can_be_retried(self):
         model = Mock()
         model.invoke.return_value = AIMessage(content="Recovered")
-        with patch("parking_agent.AzureChatOpenAI", side_effect=[ValueError("private"), model]) as constructor:
+        with patch("parking_agent.AzureChatOpenAI", side_effect=[OpenAIError("private"), model]) as constructor:
             graph = ParkingSpaceReservationAgent().graph
-            with self.assertRaises(RuntimeError):
+            with self.assertRaisesRegex(RuntimeError, "Unable to initialize the model") as error:
                 graph.invoke({"messages": [HumanMessage(content="Hi")]})
+            self.assertNotIn("private", str(error.exception))
             graph.invoke({"messages": [HumanMessage(content="Retry")]})
         self.assertEqual(constructor.call_count, 2)
+
+    def test_unexpected_model_errors_are_not_hidden(self):
+        for failure in (TypeError("bug"), KeyError("bug"), ValueError("bug")):
+            with self.subTest(failure=type(failure).__name__):
+                model = Mock()
+                model.invoke.side_effect = failure
+                graph = ParkingSpaceReservationAgent(llm_client=model).graph
+                with self.assertRaises(type(failure)) as error:
+                    graph.invoke({"messages": [HumanMessage(content="Hi")]})
+                self.assertIs(error.exception, failure)
+
+    def test_missing_configuration_is_sanitized_without_loading_local_secrets(self):
+        with patch.dict(os.environ, {}, clear=True):
+            graph = ParkingSpaceReservationAgent().graph
+            with self.assertRaisesRegex(RuntimeError, "Unable to initialize the model"):
+                graph.invoke({"messages": [HumanMessage(content="Hi")]})
+
+    def test_dataclass_defaults_are_not_shared_and_empty_input_is_supported(self):
+        first, second = ParkingState(), ParkingState()
+        first.messages.append(HumanMessage(content="Private to first state"))
+        self.assertEqual(second.messages, [])
+        model = Mock()
+        model.invoke.return_value = AIMessage(content="Hello")
+        result = ParkingSpaceReservationAgent(llm_client=model).graph.invoke({})
+        self.assertEqual(result["messages"][-1].content, "Hello")
+        self.assertEqual(len(model.invoke.call_args.args[0]), 1)
+
+    def test_state_reducer_updates_messages_by_id(self):
+        model = Mock()
+        model.invoke.side_effect = [
+            AIMessage(content="First answer", id="answer-1"),
+            AIMessage(content="Second answer", id="answer-2"),
+        ]
+        graph = ParkingSpaceReservationAgent(llm_client=model, checkpointer=InMemorySaver()).graph
+        config: RunnableConfig = {"configurable": {"thread_id": "message-update"}}
+        graph.invoke({"messages": [HumanMessage(content="Original", id="question")]}, config)
+        result = graph.invoke({"messages": [HumanMessage(content="Revised", id="question")]}, config)
+        self.assertEqual(
+            [message.content for message in result["messages"]], ["Revised", "First answer", "Second answer"]
+        )
 
 
 class AsyncAgentTests(unittest.IsolatedAsyncioTestCase):
@@ -172,11 +218,21 @@ class AsyncAgentTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_async_error_is_sanitized(self):
         model = Mock()
-        model.ainvoke = AsyncMock(side_effect=ValueError("private-api-key"))
+        model.ainvoke = AsyncMock(side_effect=APIError("private-api-key", request=Mock(), body=None))
         graph = ParkingSpaceReservationAgent(llm_client=model).graph
         with self.assertRaisesRegex(RuntimeError, "Unable to get a response") as error:
             await graph.ainvoke({"messages": [HumanMessage(content="Hi")]})
         self.assertNotIn("private-api-key", str(error.exception))
+
+    async def test_unexpected_async_model_errors_are_not_hidden(self):
+        for failure in (TypeError("bug"), KeyError("bug"), ValueError("bug")):
+            with self.subTest(failure=type(failure).__name__):
+                model = Mock()
+                model.ainvoke = AsyncMock(side_effect=failure)
+                graph = ParkingSpaceReservationAgent(llm_client=model).graph
+                with self.assertRaises(type(failure)) as error:
+                    await graph.ainvoke({"messages": [HumanMessage(content="Hi")]})
+                self.assertIs(error.exception, failure)
 
 
 if __name__ == "__main__":
