@@ -20,11 +20,17 @@
   Expected provider/configuration failures are sanitized; unexpected programming errors propagate.
   Traces/checkpoints still need protection. `ParkingState` uses a dataclass and `add_messages`
   to preserve the messages API/Studio schema while avoiding ty's TypedDict protocol-bound error.
-- `storage/` implements unseeded local persistent Chroma static retrieval and SQLite dynamic
+- `storage/` implements local persistent Chroma static retrieval and unseeded SQLite dynamic
   facts, owned by the agent as `static_store`/`dynamic_store`, configured by frozen
   `AgentConfig.storage`/`StorageConfig`. Embeddings/stores can be injected. Databases initialize
   on first storage operation, not chat/import; embedding clients initialize on actual embedding.
   The graph does not call storage yet. Paths default to project-root `.data/` (git-ignored).
+- `storage/static_examples.json` has 30 example static records for the single
+  fictional `demo-central` location (10 general, 9 location, 11 booking-process scenarios).
+  `python -m storage.seed` explicitly validates/upserts stable IDs; `--dry-run` is offline,
+  `--file` permits reviewed larger datasets. No automatic seeding or `.env` loading;
+  use `uv run --env-file .env python -m storage.seed` for configured embeddings.
+  Demo booking states are workflow guidance, not reservations or implemented enforcement.
 
 ## Persistent project context
 - Keep project requirements, accepted decisions with rationale, current status, and
@@ -40,7 +46,7 @@
 ### Outstanding design work
 - Before defining reservation/allocation schemas, resolve single versus multiple parking
   locations and interchangeable capacity versus individually bookable spaces. Current stores
-  require explicit location IDs without selecting topology. Seeding and sources are deferred.
+  require explicit location IDs without selecting topology. Real sources and dynamic seeding are deferred.
 - Chroma was selected for a local, serverless persistent static index; SQLite for dynamic facts
   without another dependency. Static LangChain documents require stable IDs and exactly
   `location_id`, `source`, `topic` metadata; topics are general/location/booking_process.

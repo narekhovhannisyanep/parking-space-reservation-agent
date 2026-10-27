@@ -75,8 +75,9 @@ class StaticParkingStore:
                 )
             return self._store
 
-    def upsert_documents(self, documents: list[Document]) -> list[str]:
-        """Insert/update by stable document ID; validate the entire batch before embedding."""
+    @staticmethod
+    def validate_documents(documents: list[Document]) -> list[str]:
+        """Validate a complete batch without creating resources or calling embeddings."""
         ids: list[str] = []
         for document in documents:
             if not document.id or not document.id.strip() or not document.page_content.strip():
@@ -91,6 +92,11 @@ class StaticParkingStore:
             ids.append(document.id)
         if len(set(ids)) != len(ids):
             raise ValueError("Document IDs must be unique within a batch.")
+        return ids
+
+    def upsert_documents(self, documents: list[Document]) -> list[str]:
+        """Insert/update by stable document ID; validate the entire batch before embedding."""
+        ids = self.validate_documents(documents)
         if not documents:
             return []
         return self._get_store().add_documents(documents, ids=ids)

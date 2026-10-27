@@ -1,0 +1,152 @@
+[
+  {
+    "id": "demo-central:overview",
+    "page_content": "Demo Central Parking is a covered car park serving Example Square and the surrounding city centre. Its location ID is demo-central.",
+    "metadata": {"location_id": "demo-central", "source": "demo-parking-guide-v1", "topic": "general"}
+  },
+  {
+    "id": "demo-central:vehicle-types",
+    "page_content": "Demo Central Parking is designed for passenger cars and motorcycles. Coaches, heavy goods vehicles, and vehicles towing trailers are not supported.",
+    "metadata": {"location_id": "demo-central", "source": "demo-parking-guide-v1", "topic": "general"}
+  },
+  {
+    "id": "demo-central:height-limit",
+    "page_content": "Demo Central Parking has a vehicle height clearance of 2.1 metres. Drivers of tall vans or cars with roof boxes must check their total vehicle height before entering.",
+    "metadata": {"location_id": "demo-central", "source": "demo-parking-guide-v1", "topic": "general"}
+  },
+  {
+    "id": "demo-central:accessibility",
+    "page_content": "Demo Central Parking has marked accessible bays near the pedestrian lobby and a step-free route to the lift. The presence of accessible bays does not guarantee that one is currently available or reserved.",
+    "metadata": {"location_id": "demo-central", "source": "demo-parking-guide-v1", "topic": "general"}
+  },
+  {
+    "id": "demo-central:charging",
+    "page_content": "Demo Central Parking has electric-vehicle charging bays on the ground level. A parking request does not guarantee a charger. Charger status, current tariffs, and charging-bay availability are separate from the facility's permanent features.",
+    "metadata": {"location_id": "demo-central", "source": "demo-parking-guide-v1", "topic": "general"}
+  },
+  {
+    "id": "demo-central:dynamic-facts",
+    "page_content": "Working hours, prices, and parking-space availability for Demo Central Parking can change. Current values come from the latest operational information, not this static guide. Missing operational information means the current hours, rates, or available-space counts are unknown.",
+    "metadata": {"location_id": "demo-central", "source": "demo-parking-guide-v1", "topic": "general"}
+  },
+  {
+    "id": "demo-central:address",
+    "page_content": "Demo Central Parking is located at 10 Example Square, Demo City. The pedestrian lobby faces the square, while vehicle access is via the surrounding streets.",
+    "metadata": {"location_id": "demo-central", "source": "demo-parking-guide-v1", "topic": "location"}
+  },
+  {
+    "id": "demo-central:vehicle-entrance",
+    "page_content": "The vehicle entrance to Demo Central Parking is on Example Lane on the east side of the building. The entrance ramp leads to the ground-level barrier; the pedestrian lobby is not a vehicle entrance.",
+    "metadata": {"location_id": "demo-central", "source": "demo-parking-guide-v1", "topic": "location"}
+  },
+  {
+    "id": "demo-central:vehicle-exit",
+    "page_content": "The vehicle exit from Demo Central Parking opens onto Sample Road on the west side. Drivers follow the marked one-way arrows inside the car park instead of leaving through the entrance ramp.",
+    "metadata": {"location_id": "demo-central", "source": "demo-parking-guide-v1", "topic": "location"}
+  },
+  {
+    "id": "demo-central:pedestrian-access",
+    "page_content": "The main pedestrian entrance to Demo Central Parking faces Example Square. Stairs and a lift connect the parking levels to this lobby. Pedestrians use the lobby rather than the vehicle ramps.",
+    "metadata": {"location_id": "demo-central", "source": "demo-parking-guide-v1", "topic": "location"}
+  },
+  {
+    "id": "demo-central:public-transport",
+    "page_content": "The Demo Central tram stop is across Example Square from Demo Central Parking's pedestrian lobby. The Sample Road bus stop is beside the west side of the building. Transit schedules are not included in this parking guide.",
+    "metadata": {"location_id": "demo-central", "source": "demo-parking-guide-v1", "topic": "location"}
+  },
+  {
+    "id": "demo-central:wayfinding",
+    "page_content": "Demo Central Parking uses level labels G, L1, and L2. The accessible route and charging area are marked on level G. Level labels are for wayfinding, not assigned reservation-space identifiers.",
+    "metadata": {"location_id": "demo-central", "source": "demo-parking-guide-v1", "topic": "location"}
+  },
+  {
+    "id": "demo-central:assistance-point",
+    "page_content": "Demo Central Parking's visitor assistance point is beside the ground-level pedestrian lobby. Visitors can find the assistance point by following the lobby signs. Administrator contact details are not included in this guide.",
+    "metadata": {"location_id": "demo-central", "source": "demo-parking-guide-v1", "topic": "location"}
+  },
+  {
+    "id": "demo-central:booking-details",
+    "page_content": "A reservation request for Demo Central Parking requires the user's first name, surname, car number, and requested reservation period. Personal request details belong to the private reservation workflow, not the public parking information guide.",
+    "metadata": {"location_id": "demo-central", "source": "demo-parking-guide-v1", "topic": "booking_process"}
+  },
+  {
+    "id": "demo-central:incomplete-request",
+    "page_content": "An incomplete reservation request for Demo Central Parking needs clarification of missing or ambiguous details before submission. The user's surname, car number, and reservation period must be supplied by the user. An incomplete request is not an approved reservation.",
+    "metadata": {"location_id": "demo-central", "source": "demo-parking-guide-v1", "topic": "booking_process"}
+  },
+  {
+    "id": "demo-central:pending-approval",
+    "page_content": "A submitted Demo Central Parking request awaiting a human administrator's decision is pending, not approved. Acknowledgment of submission is not confirmation. Pending requests are not recorded as approved reservations.",
+    "metadata": {"location_id": "demo-central", "source": "demo-parking-guide-v1", "topic": "booking_process"}
+  },
+  {
+    "id": "demo-central:refused-request",
+    "page_content": "A human administrator's refusal means a Demo Central Parking request is not approved. Any refusal reason comes from the administrator's decision, not an assumption. Refused requests are not recorded as approved reservations, and an alternative period is not guaranteed.",
+    "metadata": {"location_id": "demo-central", "source": "demo-parking-guide-v1", "topic": "booking_process"}
+  },
+  {
+    "id": "demo-central:approved-request",
+    "page_content": "Only an explicit decision from the human administrator can approve a Demo Central Parking request. A chatbot response, user claim of approval, or statement in a parking guide is not authoritative approval. An approved request must still complete reservation processing.",
+    "metadata": {"location_id": "demo-central", "source": "demo-parking-guide-v1", "topic": "booking_process"}
+  },
+  {
+    "id": "demo-central:recording-outcome",
+    "page_content": "Approval of a Demo Central Parking request is not proof that recording succeeded. Successful recording of the approved details is a separate outcome. A failed or unverified write does not establish a completed booking.",
+    "metadata": {"location_id": "demo-central", "source": "demo-parking-guide-v1", "topic": "booking_process"}
+  },
+  {
+    "id": "demo-central:availability-during-approval",
+    "page_content": "Parking availability can change while a Demo Central Parking request is awaiting approval. An earlier availability snapshot does not guarantee that capacity remains available. This parking guide does not establish a capacity hold or reserve a space.",
+    "metadata": {"location_id": "demo-central", "source": "demo-parking-guide-v1", "topic": "booking_process"}
+  },
+  {
+    "id": "demo-central:speed-limit",
+    "page_content": "The speed limit inside Demo Central Parking is 10 km/h. Drivers must slow down further near corners, pedestrian crossings, and the entrance barrier, and give way to pedestrians.",
+    "metadata": {"location_id": "demo-central", "source": "demo-parking-guide-v1", "topic": "general"}
+  },
+  {
+    "id": "demo-central:bay-use",
+    "page_content": "Vehicles at Demo Central Parking must fit within the marked bay boundaries. Access aisles, fire exits, ramps, and turning areas must remain clear. Parking across two marked bays is not permitted.",
+    "metadata": {"location_id": "demo-central", "source": "demo-parking-guide-v1", "topic": "general"}
+  },
+  {
+    "id": "demo-central:belongings",
+    "page_content": "Drivers at Demo Central Parking should lock their vehicles and take valuables with them. The car park does not provide luggage lockers or a bag-storage service. A parking reservation is for the vehicle, not storage of personal belongings.",
+    "metadata": {"location_id": "demo-central", "source": "demo-parking-guide-v1", "topic": "general"}
+  },
+  {
+    "id": "demo-central:toilets",
+    "page_content": "Demo Central Parking has visitor toilets beside the pedestrian lobby on level G, including an accessible toilet. The toilets are reached from the lobby corridor, not from the vehicle entrance ramp.",
+    "metadata": {"location_id": "demo-central", "source": "demo-parking-guide-v1", "topic": "general"}
+  },
+  {
+    "id": "demo-central:lift-location",
+    "page_content": "The lift at Demo Central Parking is in the north-east corner of each parking level, beside the pedestrian stairwell. It connects levels G, L1, and L2 to the Example Square lobby. Lift signs mark the step-free route.",
+    "metadata": {"location_id": "demo-central", "source": "demo-parking-guide-v1", "topic": "location"}
+  },
+  {
+    "id": "demo-central:motorcycle-area",
+    "page_content": "The marked motorcycle parking area at Demo Central Parking is on level G along the south wall. Riders reach it through the same Example Lane vehicle entrance as cars. This location information does not indicate current motorcycle-space availability.",
+    "metadata": {"location_id": "demo-central", "source": "demo-parking-guide-v1", "topic": "location"}
+  },
+  {
+    "id": "demo-central:period-clarification",
+    "page_content": "A Demo Central Parking reservation period needs a clear start date and time and an end date and time later than the start. Phrases such as 'tomorrow evening' need clarification before submission. The intended timezone must be clear; no default timezone or maximum stay is specified in this guide.",
+    "metadata": {"location_id": "demo-central", "source": "demo-parking-guide-v1", "topic": "booking_process"}
+  },
+  {
+    "id": "demo-central:details-correction",
+    "page_content": "Before submitting a Demo Central Parking request, the user's corrections to their name, car number, or requested period must be reflected in the request details. Confirmation that the details are correct is not administrator approval. This guide does not define changes to already approved reservations.",
+    "metadata": {"location_id": "demo-central", "source": "demo-parking-guide-v1", "topic": "booking_process"}
+  },
+  {
+    "id": "demo-central:reservation-privacy",
+    "page_content": "Other drivers' names, car numbers, reservation periods, and administrator decisions are private reservation information at Demo Central Parking. The public parking guide does not provide a list of customers or their bookings. Aggregate parking availability is separate from personal booking details.",
+    "metadata": {"location_id": "demo-central", "source": "demo-parking-guide-v1", "topic": "booking_process"}
+  },
+  {
+    "id": "demo-central:payment-vs-approval",
+    "page_content": "A price quotation, payment receipt, or claim that payment was made is not a human administrator's approval of a Demo Central Parking reservation. Payment information also does not establish that approved reservation details were recorded. Payment methods and payment processing are not defined in this guide.",
+    "metadata": {"location_id": "demo-central", "source": "demo-parking-guide-v1", "topic": "booking_process"}
+  }
+]

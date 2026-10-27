@@ -65,7 +65,7 @@ The server export intentionally has no custom checkpointer:
 Agent Server supplies persistence. Without the server or an injected checkpointer,
 direct callers must supply conversation history themselves.
 
-This remains a conversational prototype with an unseeded storage layer: graph-wired RAG,
+This remains a conversational prototype with an explicitly seedable storage layer: graph-wired RAG,
 live availability, administrator approval, allocation, and recording are **not implemented**.
 It cannot complete reservations.
 Inputs are sent to the configured model provider. Keep secrets out of chat and leave
@@ -78,13 +78,12 @@ graph errors do not replace access controls, checkpoint protection, or trace red
 Only expected OpenAI API and client-configuration errors are sanitized; programming
 errors propagate so they can be diagnosed rather than silently masked.
 
-## Persistent parking data (no seeding yet)
+## Persistent parking data
 
-Both stores are local and persistent across process restarts. No seed script, sample
-parking records, or automatic chat ingestion is provided. Starting Studio or sending a
-chat message does not create either database: the conversational graph is unchanged
-and does not yet call these helpers. A first storage operation creates only the empty
-collection/table as needed; writes require explicit trusted Python calls.
+Both stores are local and persistent across process restarts. Static demo data is
+available through an explicit seed command; dynamic data remains unseeded. Starting
+Studio or sending a chat message does not seed or create either database: the graph
+does not yet call these helpers. Writes require explicit trusted Python calls.
 
 ### Static information: Chroma
 
@@ -109,6 +108,72 @@ Text is sent directly without tokenizer/model downloads; future ingestion must c
 documents to the configured embedding model's input limits. Changing the embedding
 model requires reindexing into a new collection, even if vector dimensions match.
 Expected embedding configuration/API errors are sanitized.
+
+### Seed the static examples
+
+`storage/static_examples.json` contains **30 example records** for one fictional
+location, `demo-central`, with source `demo-parking-guide-v1`:
+
+- 10 general records: overview, vehicle types, height clearance, accessibility,
+  charging facilities, static/dynamic fact boundaries, speed limits, bay-use rules,
+  belongings, and visitor toilets.
+- 9 location records: address, vehicle entrance/exit, pedestrian access,
+  public transport, wayfinding, visitor assistance, lift location, and motorcycle parking.
+- 11 booking-process records: required details, incomplete requests, pending approval,
+  refusal, explicit human approval, recording outcomes, availability changing during
+  approval, period clarification, corrected details, privacy, and payment-versus-approval.
+
+Records read as normal parking-guide entries, without repeated demo disclaimers.
+Booking-state records describe the intended workflow,
+not real requests, implemented services, or authoritative approval decisions. No personal
+reservation data, live prices, working hours, or availability snapshots are seeded.
+One demo location does not decide the eventual production parking topology.
+
+The curated records support a focused static-retrieval showcase,
+not evidence of retrieval accuracy or complete application functionality. Demonstrating
+hours, prices, and availability needs separate dynamic fixtures; approval and recording
+need executable workflow scenarios, not more static records. Evaluate with a separate
+question/reference-answer dataset, including paraphrases, multi-document questions,
+and unknown answers. Increase the corpus when a planned demo question lacks coverage
+or a retrieval test needs more realistic distractors, rather than to meet an arbitrary count.
+
+Validate offline first, from the project root:
+
+```bash
+.venv/bin/python -m storage.seed --dry-run
+```
+
+Load the existing `.env` explicitly and embed/upsert the examples into the configured
+Chroma collection (defaults to `parking_static` under `.data/chroma`):
+
+```bash
+uv run --env-file .env python -m storage.seed
+```
+
+This calls the configured embedding provider and requires the Azure/DIAL settings
+described above. Application imports and the seed module do not load `.env` themselves.
+The command validates the entire file before initializing storage. Repeating it updates
+the same stable `demo-central:*` IDs rather than creating duplicates; unrelated IDs are
+preserved, and SQLite is untouched. It does not delete previously seeded records omitted
+from a newer file; delete obsolete IDs explicitly through `delete_documents`.
+
+For retrieval, pass `location_id="demo-central"` to `static_store.search(...)`.
+The chat graph still does not retrieve these documents automatically.
+
+To expand the dataset, append reviewed records to the JSON array with unique,
+stable IDs and the existing `id`, `page_content`, and `metadata` structure. There is no
+fixed record-count limit. You can also supply a different reviewed file:
+
+```bash
+.venv/bin/python -m storage.seed --file path/to/reviewed-static.json --dry-run
+uv run --env-file .env python -m storage.seed --file path/to/reviewed-static.json
+```
+
+The bundled file resolves relative to the seed module, independent of the working
+directory; an explicit `--file` path resolves relative to your current working directory.
+Keep each document within the embedding model's input limits; automatic chunking is
+not implemented. Review custom text for sensitive information and source authenticity:
+schema validation alone does not enforce either. Keep demo data out of production.
 
 ### Dynamic information: SQLite
 
@@ -177,6 +242,8 @@ async graph execution, thread isolation, sanitized errors, and the prompt contra
 Storage checks use temporary directories and offline deterministic embeddings to test
 Chroma/SQLite CRUD, new-process persistence, location/collection isolation, lazy
 initialization, input validation, concurrent workers, and transaction cleanup.
+Seed checks also cover the 30-record fixture, extensibility, dry-run behavior, invalid
+files/batches, repeatable ingestion, and preservation of unrelated documents.
 They do not seed project data, make API calls, or evaluate live model behavior,
 semantic retrieval accuracy, or production security enforcement.
 
