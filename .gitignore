@@ -29,3 +29,13 @@ AGENTS.local.md
 
 # Claude Code configuration files
 CLAUDE.local.md
+
+# Vector database & Langgraph local storage
+*.sqlite
+*.db
+.chroma/
+.faiss/
+
+# Testing, tracing, and log outputs
+.pytest_cache/
+*.log

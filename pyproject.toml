@@ -27,3 +27,9 @@ unfixable = ["F401"]
 
 [tool.ty]
 environment.python = ".venv"
+
+[dependency-groups]
+dev = [
+    "langgraph-cli[inmem]>=0.4.38",
+    "langgraph[inmem]>=1.2.16",
+]
