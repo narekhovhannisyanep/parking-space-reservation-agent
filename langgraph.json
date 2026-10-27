@@ -1,5 +1,5 @@
 {
-    "dokerfile_lines": [],
+    "dockerfile_lines": [],
     "graphs": {
         "parking_space_reservation": "./app.py:agent"
     },

@@ -1,13 +1,12 @@
 """Offline prompt-contract and caller checks; these do not evaluate LLM behavior."""
 
-import runpy
 import unittest
-from pathlib import Path
-from unittest.mock import Mock, patch
+from unittest.mock import Mock
 
 from langchain.messages import AIMessage, HumanMessage, SystemMessage
 
 from commons.constants import SYSTEM_PROMPT
+from parking_agent import ParkingSpaceReservationAgent
 
 
 class SystemPromptTests(unittest.TestCase):
@@ -49,15 +48,13 @@ class SystemPromptTests(unittest.TestCase):
         model = Mock()
         response = AIMessage(content="Please provide your reservation period.")
         model.invoke.return_value = response
-        app_path = Path(__file__).resolve().parents[1] / "app.py"
-        with patch("dotenv.load_dotenv"), patch("langchain_openai.AzureChatOpenAI", return_value=model):
-            app = runpy.run_path(str(app_path))
+        graph = ParkingSpaceReservationAgent(llm_client=model).graph
 
         for history in ([], [HumanMessage(content="I would like to reserve parking.")]):
             with self.subTest(history_length=len(history)):
                 model.reset_mock()
                 state = {"messages": history.copy()}
-                result = app["agent"].invoke(state)
+                result = graph.invoke(state)
                 model.invoke.assert_called_once()
                 messages = model.invoke.call_args.args[0]
                 self.assertIsInstance(messages[0], SystemMessage)

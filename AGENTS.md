@@ -3,10 +3,21 @@
 ## Scope and repository state
 - This file applies to the entire repository unless a more specific AGENTS.md applies.
 - Python >=3.12 project with LangChain/LangGraph dependencies, shared constants,
-  a user-facing system prompt, and a basic conversational graph prototype.
+  a user-facing system prompt, and a class-owned, import-safe conversational graph.
   All four stages remain incomplete; prompt instructions do not implement enforcement.
 - Two-agent, graph-controlled coordination is accepted; storage and detailed topology remain open.
 - Verify the current scaffold before implementation; proposals are not accepted decisions.
+- Primary entry point: LangGraph CLI + LangSmith Studio (Chat/Graph modes), not a terminal loop.
+  Studio is for development/internal testing; public UI and production access controls remain open.
+- `ParkingSpaceReservationAgent` in `parking_agent.py` owns immutable `AgentConfig`,
+  shared clients/helpers, and deterministic graph construction. `app.py` exports its graph as `agent`.
+  The default client uses the existing AzureChatOpenAI/DIAL prototype configuration;
+  `AZURE_OPENAI_DEPLOYMENT` can override it. Final provider/model selection remains open.
+- Conversation/request state belongs to graph threads, never shared mutable instance attributes.
+  Agent Server supplies checkpoint persistence; the export does not install a custom checkpointer.
+  Models/checkpointers can be injected for tests. Imports do not load `.env`, initialize clients,
+  or create databases; CLI loads `.env` and clients initialize lazily once per instance.
+  Sync/async nodes omit raw provider details from graph errors; traces/checkpoints still need protection.
 
 ## Persistent project context
 - Keep project requirements, accepted decisions with rationale, current status, and
@@ -22,8 +33,9 @@
 ### Outstanding design work
 - Before finalizing data storage, resolve single versus multiple parking locations and
   interchangeable capacity versus individually bookable spaces.
-- Decide whether to separate static RAG knowledge from live structured data; this is
-  an optional design choice, not an accepted architecture.
+- Use class-owned vector/RAG helpers for static information and SQL helpers for dynamic data.
+  This separation is the accepted design direction, not yet implemented. Chroma/SQLite were
+  illustrative suggestions; engines, data sources, schema, and resource lifecycle remain open.
 - Consider keeping reservation personal data out of the general-purpose RAG index;
   protect private data through access controls and safe logging, not prompts alone.
 - Availability may change while administrator approval is pending. Decide whether to
@@ -108,14 +120,15 @@
 - A request acknowledgment is not administrator approval; approval is not a successful write.
 - Pending/refused requests must not be recorded as approved reservations.
 - Model-generated output is not authoritative approval or reservation data.
-- Provider/model, vector database, communication channel, SQL use, MCP implementation,
+- Provider/model, vector/SQL engines, communication channel, MCP implementation,
   authentication, detailed states, timezone semantics, and file location remain undecided.
 - Document new decisions without turning optional specification examples into requirements.
 - Retain LICENSE (MIT) and existing copyright notices.
 
 ## Build, lint, and test commands
-- Offline prompt/caller checks: `.venv/bin/python -m unittest discover -s tests -v`.
-  They verify prompt coverage and system-message integration with a mocked model,
+- Local graph server: `.venv/bin/langgraph dev`; interact via LangSmith Studio.
+- Offline checks: `.venv/bin/python -m unittest discover -s tests -v`.
+  They verify graph export, class lifecycle/config, sync/async execution, thread isolation, and prompt coverage,
   not live LLM behavior or application-level security enforcement.
 - Ruff and ty settings exist in pyproject.toml; no build or CI checks are configured.
 - When tooling is introduced, record verified commands here and setup in README.md.
