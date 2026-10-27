@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 from threading import Lock
 from typing import Annotated, Literal
 
+from langchain_core.embeddings import Embeddings
 from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.messages import AnyMessage, BaseMessage, SystemMessage
 from langchain_core.runnables import RunnableConfig, RunnableLambda
@@ -18,6 +19,7 @@ from openai import APIError, OpenAIError
 from pydantic import ValidationError
 
 from commons.constants import DIAL_GPT_LUNA_6, SYSTEM_PROMPT
+from storage import DynamicParkingStore, StaticParkingStore, StorageConfig
 
 
 @dataclass
@@ -41,18 +43,22 @@ class AgentConfig:
     temperature: float = 0
     timeout: float = 60
     max_retries: int = 2
+    storage: StorageConfig = field(default_factory=StorageConfig)
 
     @classmethod
     def from_environment(cls) -> "AgentConfig":
         """Read settings after LangGraph CLI has loaded the configured environment."""
-        return cls(deployment=os.getenv("AZURE_OPENAI_DEPLOYMENT") or DIAL_GPT_LUNA_6)
+        return cls(
+            deployment=os.getenv("AZURE_OPENAI_DEPLOYMENT") or DIAL_GPT_LUNA_6,
+            storage=StorageConfig.from_environment(),
+        )
 
 
 class ParkingSpaceReservationAgent:
     """Own shared config, model, and graph, never a shared user conversation.
 
-    Future retrieval and reservation services will be initialized here and reused
-    by graph nodes. No vector/SQL databases or approval services exist yet.
+    Static/dynamic storage helpers are shared and lazy. Conversation state remains
+    thread-scoped; storage APIs are not yet exposed as graph tools.
     """
 
     def __init__(
@@ -61,10 +67,17 @@ class ParkingSpaceReservationAgent:
         *,
         config: AgentConfig | None = None,
         checkpointer: BaseCheckpointSaver | None = None,
+        embeddings: Embeddings | None = None,
+        static_store: StaticParkingStore | None = None,
+        dynamic_store: DynamicParkingStore | None = None,
     ) -> None:
         self.config = config if config is not None else AgentConfig.from_environment()
         self._llm_client = llm_client
         self._initialization_lock = Lock()
+        self.static_store = (
+            static_store if static_store is not None else StaticParkingStore(self.config.storage, embeddings=embeddings)
+        )
+        self.dynamic_store = dynamic_store if dynamic_store is not None else DynamicParkingStore(self.config.storage)
         self.graph = self._build_graph(checkpointer)
 
     def _get_llm_client(self) -> BaseChatModel:

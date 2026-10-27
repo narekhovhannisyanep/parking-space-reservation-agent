@@ -16,6 +16,7 @@ from openai import APIError, OpenAIError
 
 from commons.constants import DIAL_GPT_LUNA_6
 from parking_agent import AgentConfig, ParkingSpaceReservationAgent, ParkingState
+from storage import StorageConfig
 
 
 class ConfigTests(unittest.TestCase):
@@ -28,12 +29,42 @@ class ConfigTests(unittest.TestCase):
 
     def test_shared_settings_are_immutable(self):
         config = AgentConfig()
-        for field_name in ("deployment", "system_prompt", "reasoning_effort", "temperature", "timeout", "max_retries"):
+        for field_name in (
+            "deployment",
+            "system_prompt",
+            "reasoning_effort",
+            "temperature",
+            "timeout",
+            "max_retries",
+            "storage",
+        ):
             with self.subTest(field=field_name), self.assertRaises(FrozenInstanceError):
                 setattr(config, field_name, None)
 
 
 class AgentTests(unittest.TestCase):
+    def test_agent_owns_lazy_storage_without_changing_chat_behavior(self):
+        with patch("storage.static.Chroma") as chroma, patch("storage.dynamic.sqlite3.connect") as sqlite:
+            model = Mock()
+            model.invoke.return_value = AIMessage(content="Hello")
+            config = AgentConfig(storage=StorageConfig(chroma_collection="custom_collection"))
+            agent = ParkingSpaceReservationAgent(config=config, llm_client=model)
+            self.assertIs(agent.static_store.config, config.storage)
+            self.assertIs(agent.dynamic_store.config, config.storage)
+            self.assertIsNone(agent.static_store._store)
+            self.assertFalse(agent.dynamic_store._initialized)
+            agent.graph.invoke({"messages": [HumanMessage(content="Hello")]})
+            chroma.assert_not_called()
+            sqlite.assert_not_called()
+
+    def test_storage_and_embeddings_can_be_injected(self):
+        static_store, dynamic_store, embeddings = Mock(), Mock(), Mock()
+        agent = ParkingSpaceReservationAgent(static_store=static_store, dynamic_store=dynamic_store)
+        self.assertIs(agent.static_store, static_store)
+        self.assertIs(agent.dynamic_store, dynamic_store)
+        agent = ParkingSpaceReservationAgent(embeddings=embeddings)
+        self.assertIs(agent.static_store._embeddings, embeddings)
+
     def test_configuration_and_injected_client_are_reused(self):
         config = AgentConfig(system_prompt="Custom parking instructions")
         model = Mock()

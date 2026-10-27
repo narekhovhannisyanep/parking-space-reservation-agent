@@ -21,11 +21,17 @@ class AppTests(unittest.TestCase):
         with (
             patch("dotenv.load_dotenv") as load,
             patch("parking_agent.AzureChatOpenAI") as client,
+            patch("storage.static.AzureOpenAIEmbeddings") as embeddings,
+            patch("storage.static.Chroma") as chroma,
+            patch("storage.dynamic.sqlite3.connect") as sqlite,
             patch("builtins.input") as terminal,
         ):
             namespace = runpy.run_path(app.__file__)
         load.assert_not_called()
         client.assert_not_called()
+        embeddings.assert_not_called()
+        chroma.assert_not_called()
+        sqlite.assert_not_called()
         terminal.assert_not_called()
         self.assertIs(namespace["agent"], namespace["parking_agent"].graph)
 

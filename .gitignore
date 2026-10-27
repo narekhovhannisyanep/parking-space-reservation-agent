@@ -31,6 +31,11 @@ AGENTS.local.md
 CLAUDE.local.md
 
 # Vector database & Langgraph local storage
+.data/
+*.sqlite3
+*.sqlite3-*
+*.sqlite-*
+*.db-*
 *.sqlite
 *.db
 .chroma/

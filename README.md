@@ -51,20 +51,23 @@ public customer interface: it provides access to thread state and debugging tool
   retaining the same messages-based API/Studio schema and update-by-ID behavior.
   This avoids the `MessagesState` TypedDict protocol-bound incompatibility in `ty`.
   The class owns resources and workflow code; it is not a third orchestrator LLM.
-- Future vector storage/retrieval helpers for static facts and SQL services for
-  dynamic data will be initialized and owned by this class. The split is the chosen
-  design direction; engines, source data, and schema are not implemented or finalized.
-  Chroma and SQLite are examples under consideration, not installed dependencies.
+- `storage/` supplies class-owned `static_store` (persistent Chroma via
+  `langchain-chroma`) and `dynamic_store` (Python's built-in SQLite). `AgentConfig.storage`
+  holds immutable `StorageConfig`; both helpers initialize their databases on first use.
+  They are trusted Python APIs, not model tools or shared conversation state.
 
 Importing `app` creates the instance and graph but does not read `.env`, initialize
 an API client, create databases, or make network calls. Tests can inject a model
 through `ParkingSpaceReservationAgent(llm_client=...)` and an optional checkpointer
-for standalone use. The server export intentionally has no custom checkpointer:
+for standalone use. Embeddings and either storage helper can also be injected through
+the `embeddings`, `static_store`, and `dynamic_store` constructor arguments.
+The server export intentionally has no custom checkpointer:
 Agent Server supplies persistence. Without the server or an injected checkpointer,
 direct callers must supply conversation history themselves.
 
-This remains a conversational prototype: RAG, live availability, administrator
-approval, allocation, and recording are **not implemented**. It cannot complete reservations.
+This remains a conversational prototype with an unseeded storage layer: graph-wired RAG,
+live availability, administrator approval, allocation, and recording are **not implemented**.
+It cannot complete reservations.
 Inputs are sent to the configured model provider. Keep secrets out of chat and leave
 LangSmith tracing disabled unless personal-data handling and access controls are configured.
 The template disables tracing; an existing `.env` is not changed automatically.
@@ -74,6 +77,85 @@ prompts, responses, and personal data may also be stored in LangSmith. Sanitized
 graph errors do not replace access controls, checkpoint protection, or trace redaction.
 Only expected OpenAI API and client-configuration errors are sanitized; programming
 errors propagate so they can be diagnosed rather than silently masked.
+
+## Persistent parking data (no seeding yet)
+
+Both stores are local and persistent across process restarts. No seed script, sample
+parking records, or automatic chat ingestion is provided. Starting Studio or sending a
+chat message does not create either database: the conversational graph is unchanged
+and does not yet call these helpers. A first storage operation creates only the empty
+collection/table as needed; writes require explicit trusted Python calls.
+
+### Static information: Chroma
+
+The exported instance's `app.parking_agent.static_store` exposes `upsert_documents(documents)`,
+`search(query, location_id=..., k=4)`, and `delete_documents(ids)`.
+Ingestion accepts LangChain `Document` objects with a stable, nonblank `id`, nonblank
+text, and exactly these nonblank string metadata fields:
+
+- `location_id`: an explicit parking-location identifier.
+- `source`: the reviewed public information source.
+- `topic`: `general`, `location`, or `booking_process`.
+
+Repeated upserts replace documents with the same ID; IDs are unique across the whole
+collection, so include location in IDs when appropriate. Searches filter by explicit
+location and return an empty list when no matching documents exist, without calling
+the embedding provider. Empty upsert/delete batches are no-ops.
+
+The default embedding client uses `AzureOpenAIEmbeddings`, the existing Azure/DIAL
+endpoint, API key, and API version, and the deployment/model constants in
+`commons/constants.py`. It initializes only on the first actual embedding request.
+Text is sent directly without tokenizer/model downloads; future ingestion must chunk
+documents to the configured embedding model's input limits. Changing the embedding
+model requires reindexing into a new collection, even if vector dimensions match.
+Expected embedding configuration/API errors are sanitized.
+
+### Dynamic information: SQLite
+
+`app.parking_agent.dynamic_store` exposes `upsert_fact(location_id, kind, value)`,
+`get_fact(location_id, kind)`, `list_facts(location_id)`, and
+`delete_fact(location_id, kind)`. Allowed kinds are `working_hours`, `prices`, and
+`availability`. `parking_dynamic_facts` has a `(location_id, kind)` primary key,
+a JSON value, and a UTC `updated_at` write timestamp. Missing facts return `None`
+or an empty list, never defaults such as zero available spaces. Writes are atomic
+upserts with parameter-bound SQL; connections are committed/rolled back and closed
+per operation, rather than shared across graph workers.
+
+JSON snapshots deliberately leave the domain schema open until real sources and
+parking topology are decided. Payloads must be JSON-compatible, with string object
+keys and finite numbers. `updated_at` is not a freshness guarantee; refresh rules
+and upstream observation times remain future work. An availability snapshot is
+**not** an allocation, hold, or reservation ledger. Both stores require explicit
+location IDs without deciding whether the deployed system has one or many locations.
+
+### Configuration and lifecycle
+
+Optional environment settings are documented in `.env.example`:
+
+| Setting | Default |
+| --- | --- |
+| `PARKING_CHROMA_DIRECTORY` | `.data/chroma` |
+| `PARKING_CHROMA_COLLECTION` | `parking_static` |
+| `PARKING_SQLITE_PATH` | `.data/parking.sqlite3` |
+| `AZURE_OPENAI_EMBEDDING_DEPLOYMENT` | `DIAL_TEXT_EMBEDDING_3_SMALL` |
+| `AZURE_OPENAI_EMBEDDING_MODEL` | `TEXT_EMBEDDING_3_SMALL` |
+
+Relative paths are anchored to the project root, not the shell's current directory.
+The CLI loads `.env`; direct Python callers must load/provide their environment
+themselves. Existing `.env` values are unchanged. Run `uv sync --dev` to install the
+updated lockfile. SQLite needs no extra package; Chroma needs no standalone server.
+Chroma persists automatically and its local client follows the owning process's
+lifetime. These synchronous storage APIs should run off the event loop when later
+wired into async graph nodes. Back up the databases using database-supported backup
+procedures; don't delete live files or copy a partially written directory.
+
+`.data/` and database sidecar files are git-ignored. Chroma anonymized telemetry is
+disabled. Metadata validation is **not** a PII detector or an authorization boundary:
+trusted ingestion must review document text, sources, and JSON values. Never store
+personal reservation details, chats, credentials, or approval decisions in these
+public-fact stores. Location filtering is not tenant authorization. Protect local
+files with OS permissions, and add authentication, safe logging, access controls,
+and retention policies before production or customer-facing deployment.
 
 ## System prompt
 
@@ -92,19 +174,27 @@ With the project dependencies installed in `.venv`, run:
 
 These checks cover the CLI export, shared configuration/client lifecycle, sync and
 async graph execution, thread isolation, sanitized errors, and the prompt contract.
-They do not make API calls or evaluate live model behavior, retrieval accuracy, or security enforcement.
+Storage checks use temporary directories and offline deterministic embeddings to test
+Chroma/SQLite CRUD, new-process persistence, location/collection isolation, lazy
+initialization, input validation, concurrent workers, and transaction cleanup.
+They do not seed project data, make API calls, or evaluate live model behavior,
+semantic retrieval accuracy, or production security enforcement.
 
 Type, source lint, and formatting checks can run through uv's temporary tool environments
 without changing the project dependencies:
 
 ```bash
 uv tool run ty check
-uv tool run ruff check app.py parking_agent.py commons tests
-uv tool run ruff format --check app.py parking_agent.py commons tests
+uv tool run ruff check app.py parking_agent.py commons storage tests
+uv tool run ruff format --check app.py parking_agent.py commons storage tests
 ```
 
 Ruff enables `BLE001` to prevent broad exception catches from returning.
 
 References: [local server](https://docs.langchain.com/langsmith/local-server),
 [Studio setup](https://docs.langchain.com/langsmith/quick-start-studio), and
-[server-managed persistence](https://docs.langchain.com/oss/python/langgraph/persistence).
+[server-managed persistence](https://docs.langchain.com/oss/python/langgraph/persistence),
+[Chroma integration](https://docs.langchain.com/oss/python/integrations/vectorstores/chroma),
+[persistent Chroma clients](https://docs.trychroma.com/docs/run-chroma/clients),
+[Azure embeddings](https://reference.langchain.com/python/langchain-openai/embeddings/azure/AzureOpenAIEmbeddings),
+and [SQLite](https://docs.python.org/3/library/sqlite3.html).

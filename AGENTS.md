@@ -5,7 +5,7 @@
 - Python >=3.12 project with LangChain/LangGraph dependencies, shared constants,
   a user-facing system prompt, and a class-owned, import-safe conversational graph.
   All four stages remain incomplete; prompt instructions do not implement enforcement.
-- Two-agent, graph-controlled coordination is accepted; storage and detailed topology remain open.
+- Two-agent, graph-controlled coordination is accepted; detailed workflow topology remains open.
 - Verify the current scaffold before implementation; proposals are not accepted decisions.
 - Primary entry point: LangGraph CLI + LangSmith Studio (Chat/Graph modes), not a terminal loop.
   Studio is for development/internal testing; public UI and production access controls remain open.
@@ -20,6 +20,11 @@
   Expected provider/configuration failures are sanitized; unexpected programming errors propagate.
   Traces/checkpoints still need protection. `ParkingState` uses a dataclass and `add_messages`
   to preserve the messages API/Studio schema while avoiding ty's TypedDict protocol-bound error.
+- `storage/` implements unseeded local persistent Chroma static retrieval and SQLite dynamic
+  facts, owned by the agent as `static_store`/`dynamic_store`, configured by frozen
+  `AgentConfig.storage`/`StorageConfig`. Embeddings/stores can be injected. Databases initialize
+  on first storage operation, not chat/import; embedding clients initialize on actual embedding.
+  The graph does not call storage yet. Paths default to project-root `.data/` (git-ignored).
 
 ## Persistent project context
 - Keep project requirements, accepted decisions with rationale, current status, and
@@ -33,13 +38,21 @@
 - Use the requirements below as the baseline; ask only about unresolved or new choices.
 
 ### Outstanding design work
-- Before finalizing data storage, resolve single versus multiple parking locations and
-  interchangeable capacity versus individually bookable spaces.
-- Use class-owned vector/RAG helpers for static information and SQL helpers for dynamic data.
-  This separation is the accepted design direction, not yet implemented. Chroma/SQLite were
-  illustrative suggestions; engines, data sources, schema, and resource lifecycle remain open.
-- Consider keeping reservation personal data out of the general-purpose RAG index;
-  protect private data through access controls and safe logging, not prompts alone.
+- Before defining reservation/allocation schemas, resolve single versus multiple parking
+  locations and interchangeable capacity versus individually bookable spaces. Current stores
+  require explicit location IDs without selecting topology. Seeding and sources are deferred.
+- Chroma was selected for a local, serverless persistent static index; SQLite for dynamic facts
+  without another dependency. Static LangChain documents require stable IDs and exactly
+  `location_id`, `source`, `topic` metadata; topics are general/location/booking_process.
+  SQLite stores working_hours/prices/availability as JSON snapshots keyed by location/kind,
+  with UTC write timestamps and per-operation transactional connections. This is not a
+  reservation ledger or availability enforcement. Domain schemas and refresh rules remain open.
+- The lazy Azure/DIAL embedding client defaults to the existing embedding constants with env
+  overrides; empty searches do not embed. No tokenizer downloads; ingestion must later chunk
+  input to model limits. Model changes require a new/reindexed collection. Telemetry is disabled.
+- Trusted Python ingestion only: no LLM write tools, chat ingestion, or personal reservation data
+  in either public-fact store. Metadata validation/filtering is not PII detection or authorization.
+  Graph retrieval/tool wiring, guardrails, access controls, safe logging, and evaluation remain open.
 - Availability may change while administrator approval is pending. Decide whether to
   hold capacity or recheck availability before committing a reservation.
 - Human-approval workflows can replay operations when resumed; notifications and
@@ -48,7 +61,7 @@
 ### Accepted responsibility boundaries
 - Parking-slot allocation, authoritative reservation state, approval enforcement,
   and record formatting/writing belong in Python code, not LLM decisions.
-- Allocation may be exposed as an agent tool; tool wiring and storage remain open.
+- Allocation may be exposed as an agent tool; tool wiring and reservation storage remain open.
 - Agents collect/clarify details and coordinate administrator communication; the
   human administrator alone approves. The recording service owns the file format,
   so the user-facing system prompt need not specify serialization details.
@@ -62,7 +75,8 @@
 - Goal: an intelligent parking chatbot with human-in-the-loop reservation confirmation.
 - Required language/frameworks: Python, LangChain, and LangGraph.
 - Required architecture: Retrieval-Augmented Generation (RAG) with a vector database.
-- Recommended vector databases: Milvus, Pinecone, or Weaviate; none is selected yet.
+- Recommended vector databases: Milvus, Pinecone, or Weaviate; local Chroma is selected
+  for the current prototype (the recommendations are not mandatory).
 - Protect sensitive/private information, including any stored in the vector database.
 - Evaluate performance, including request latency and information retrieval accuracy.
 
@@ -122,7 +136,7 @@
 - A request acknowledgment is not administrator approval; approval is not a successful write.
 - Pending/refused requests must not be recorded as approved reservations.
 - Model-generated output is not authoritative approval or reservation data.
-- Provider/model, vector/SQL engines, communication channel, MCP implementation,
+- Final provider/model, communication channel, MCP implementation,
   authentication, detailed states, timezone semantics, and file location remain undecided.
 - Document new decisions without turning optional specification examples into requirements.
 - Retain LICENSE (MIT) and existing copyright notices.
