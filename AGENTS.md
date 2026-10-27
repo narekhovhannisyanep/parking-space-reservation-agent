@@ -2,9 +2,10 @@
 
 ## Scope and repository state
 - This file applies to the entire repository unless a more specific AGENTS.md applies.
-- Python >=3.12 scaffold with pyproject.toml and uv.lock; no dependencies,
-  application modules, or tests. All four stages remain incomplete.
-- No architecture, storage design, or application toolchain is approved/configured.
+- Python >=3.12 project with LangChain/LangGraph dependencies, shared constants,
+  a user-facing system prompt, and a basic conversational graph prototype.
+  All four stages remain incomplete; prompt instructions do not implement enforcement.
+- Two-agent, graph-controlled coordination is accepted; storage and detailed topology remain open.
 - Verify the current scaffold before implementation; proposals are not accepted decisions.
 
 ## Persistent project context
@@ -28,8 +29,20 @@
 - Availability may change while administrator approval is pending. Decide whether to
   hold capacity or recheck availability before committing a reservation.
 - Human-approval workflows can replay operations when resumed; notifications and
-  recording should resist duplicates. Exact orchestration remains undecided.
-- No implementation task is currently approved; follow the user's next request.
+  recording should resist duplicates. Detailed orchestration remains undecided.
+
+### Accepted responsibility boundaries
+- Parking-slot allocation, authoritative reservation state, approval enforcement,
+  and record formatting/writing belong in Python code, not LLM decisions.
+- Allocation may be exposed as an agent tool; tool wiring and storage remain open.
+- Agents collect/clarify details and coordinate administrator communication; the
+  human administrator alone approves. The recording service owns the file format,
+  so the user-facing system prompt need not specify serialization details.
+- Use a user-facing parking agent and an administrator-communication agent,
+  coordinated by deterministic LangGraph/Python workflow code, not a third orchestrator
+  LLM. This keeps the predictable approval lifecycle explicit without another model call.
+- The main agent may initiate submission through a tool; code validates readiness,
+  dispatches the request, waits for trusted approval/refusal, and controls allocation/recording.
 
 ## Project requirements
 - Goal: an intelligent parking chatbot with human-in-the-loop reservation confirmation.
@@ -101,7 +114,9 @@
 - Retain LICENSE (MIT) and existing copyright notices.
 
 ## Build, lint, and test commands
-- No application entry point, build, formatter, linter, type checker, or test runner is
-  configured. Do not report these checks as passed or run guessed commands.
+- Offline prompt/caller checks: `.venv/bin/python -m unittest discover -s tests -v`.
+  They verify prompt coverage and system-message integration with a mocked model,
+  not live LLM behavior or application-level security enforcement.
+- Ruff and ty settings exist in pyproject.toml; no build or CI checks are configured.
 - When tooling is introduced, record verified commands here and setup in README.md.
   Automated unit tests remain additional credit; Stage 4 workflow/load testing is required.
