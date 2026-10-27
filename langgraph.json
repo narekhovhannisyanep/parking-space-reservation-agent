@@ -1,0 +1,11 @@
+{
+    "dokerfile_lines": [],
+    "graphs": {
+        "parking_space_reservation": "./app.py:agent"
+    },
+    "env": "./.env",
+    "python_version": "3.12",
+    "dependencies": [
+        "."
+    ]
+}
