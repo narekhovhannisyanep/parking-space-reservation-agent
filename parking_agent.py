@@ -1,15 +1,20 @@
 """Class-owned parking workflow resources; conversation state belongs to graph threads."""
 
 import asyncio
+import json
 import os
+from collections.abc import Callable
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from threading import Lock
 from typing import Annotated, Literal
+from uuid import uuid4
 
 from langchain_core.embeddings import Embeddings
+from langchain_core.exceptions import OutputParserException
 from langchain_core.language_models.chat_models import BaseChatModel
-from langchain_core.messages import AnyMessage, BaseMessage
-from langchain_core.runnables import RunnableConfig, RunnableLambda
+from langchain_core.messages import AIMessage, AnyMessage
+from langchain_core.runnables import Runnable, RunnableConfig, RunnableLambda
 from langchain_openai import AzureChatOpenAI
 from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.graph import END, START, StateGraph
@@ -19,7 +24,16 @@ from openai import APIError, OpenAIError
 from pydantic import ValidationError
 
 from commons.constants import DIAL_GPT_LUNA_6, SYSTEM_PROMPT
-from context_augmentation import ContextConfig, augmented_messages, retrieve_context
+from context_augmentation import ContextConfig, augmented_messages, latest_user_index, retrieve_context
+from reservation_collection import (
+    EXTRACTION_FAILURE,
+    ReservationExtraction,
+    ReservationSession,
+    advance_collection,
+    extraction_messages,
+    is_collection_control,
+    parse_extraction,
+)
 from storage import DynamicParkingStore, StaticParkingStore, StorageConfig
 
 
@@ -39,6 +53,8 @@ class ParkingState(ParkingMessages):
     """Internal evidence is replaced each turn, not appended to conversation history."""
 
     retrieval_context: str = ""
+    reservation: dict = field(default_factory=dict)
+    reservation_reply: str = ""
 
 
 @dataclass(frozen=True)
@@ -51,17 +67,30 @@ class AgentConfig:
     temperature: float = 0
     timeout: float = 60
     max_retries: int = 2
+    extraction_method: Literal["function_calling", "json_schema"] = "function_calling"
     storage: StorageConfig = field(default_factory=StorageConfig)
     context: ContextConfig = field(default_factory=ContextConfig)
+
+    def __post_init__(self) -> None:
+        if self.extraction_method not in {"function_calling", "json_schema"}:
+            raise ValueError("PARKING_EXTRACTION_METHOD must be function_calling or json_schema.")
 
     @classmethod
     def from_environment(cls) -> "AgentConfig":
         """Read settings after LangGraph CLI has loaded the configured environment."""
         return cls(
             deployment=os.getenv("AZURE_OPENAI_DEPLOYMENT") or DIAL_GPT_LUNA_6,
+            extraction_method=_extraction_method_from_environment(),
             storage=StorageConfig.from_environment(),
             context=ContextConfig(location_id=os.getenv("PARKING_LOCATION_ID") or "demo-central"),
         )
+
+
+def _extraction_method_from_environment() -> Literal["function_calling", "json_schema"]:
+    value = os.getenv("PARKING_EXTRACTION_METHOD") or "function_calling"
+    if value not in {"function_calling", "json_schema"}:
+        raise ValueError("PARKING_EXTRACTION_METHOD must be function_calling or json_schema.")
+    return "json_schema" if value == "json_schema" else "function_calling"
 
 
 class ParkingSpaceReservationAgent:
@@ -80,9 +109,13 @@ class ParkingSpaceReservationAgent:
         embeddings: Embeddings | None = None,
         static_store: StaticParkingStore | None = None,
         dynamic_store: DynamicParkingStore | None = None,
+        reservation_extractor: Runnable | None = None,
+        clock: Callable[[], datetime] | None = None,
     ) -> None:
         self.config = config if config is not None else AgentConfig.from_environment()
         self._llm_client = llm_client
+        self._reservation_extractor = reservation_extractor
+        self._clock = clock if clock is not None else lambda: datetime.now(UTC)
         self._initialization_lock = Lock()
         self.static_store = (
             static_store if static_store is not None else StaticParkingStore(self.config.storage, embeddings=embeddings)
@@ -106,6 +139,91 @@ class ParkingSpaceReservationAgent:
                     raise RuntimeError("Unable to initialize the model. Check the model configuration.") from None
             return self._llm_client
 
+    def _get_reservation_extractor(self) -> Runnable:
+        if self._reservation_extractor is not None:
+            return self._reservation_extractor
+        model = self._get_llm_client()
+        with self._initialization_lock:
+            if self._reservation_extractor is None:
+                try:
+                    self._reservation_extractor = model.with_structured_output(
+                        ReservationExtraction, method=self.config.extraction_method, include_raw=True
+                    )
+                except NotImplementedError:
+                    raise RuntimeError("The configured model does not support reservation extraction.") from None
+            return self._reservation_extractor
+
+    def _collection_input(self, state: ParkingState) -> str:
+        index = latest_user_index(state.messages)
+        return state.messages[index].text if index is not None else ""
+
+    def _reservation_session(self, state: ParkingState) -> ReservationSession:
+        # Plain JSON checkpoint state avoids deserializing unregistered custom Python types.
+        return ReservationSession.model_validate_json(json.dumps(state.reservation))
+
+    def _collection_result(self, state: ParkingState, text: str, result: object) -> dict:
+        previous = self._reservation_session(state)
+        try:
+            proposal = parse_extraction(result)
+        except ValueError:
+            session = ReservationSession.model_validate(
+                {
+                    **previous.model_dump(),
+                    "status": "collecting" if previous.draft_id else "idle",
+                    "request": None,
+                    "confirmed_revision": None,
+                    "summary_message_id": None,
+                }
+            )
+            return {
+                "reservation": session.model_dump(mode="json"),
+                "reservation_reply": EXTRACTION_FAILURE,
+                "retrieval_context": "",
+            }
+        session, reply = advance_collection(
+            previous, text, proposal, self.config.context.location_id, self._clock(), state.messages
+        )
+        return {"reservation": session.model_dump(mode="json"), "reservation_reply": reply, "retrieval_context": ""}
+
+    def _reservation_collection(self, state: ParkingState, config: RunnableConfig) -> dict:
+        text = self._collection_input(state)
+        if not text.strip():
+            return {"reservation_reply": ""}
+        if is_collection_control(text):
+            return self._collection_result(state, text, ReservationExtraction())
+        extractor = self._get_reservation_extractor()
+        try:
+            result = extractor.invoke(extraction_messages(self._reservation_session(state), text), config=config)
+        except (APIError, ValidationError, OutputParserException):
+            return self._collection_result(state, text, None)
+        return self._collection_result(state, text, result)
+
+    async def _areservation_collection(self, state: ParkingState, config: RunnableConfig) -> dict:
+        text = self._collection_input(state)
+        if not text.strip():
+            return {"reservation_reply": ""}
+        if is_collection_control(text):
+            return self._collection_result(state, text, ReservationExtraction())
+        extractor = await asyncio.to_thread(self._get_reservation_extractor)
+        try:
+            result = await extractor.ainvoke(extraction_messages(self._reservation_session(state), text), config=config)
+        except (APIError, ValidationError, OutputParserException):
+            return self._collection_result(state, text, None)
+        return self._collection_result(state, text, result)
+
+    def _route_collection(self, state: ParkingState) -> Literal["context_augmentation", "parking_assitant"]:
+        return "parking_assitant" if state.reservation_reply else "context_augmentation"
+
+    def _collection_response(self, state: ParkingState) -> dict:
+        response = AIMessage(state.reservation_reply, id=str(uuid4()))
+        updates: dict = {"messages": [response]}
+        session = self._reservation_session(state)
+        if session.status == "awaiting_confirmation":
+            updates["reservation"] = ReservationSession.model_validate(
+                {**session.model_dump(), "summary_message_id": response.id}
+            ).model_dump(mode="json")
+        return updates
+
     def _context_augmentation(self, state: ParkingState) -> dict[str, str]:
         return {
             "retrieval_context": retrieve_context(
@@ -117,7 +235,9 @@ class ParkingSpaceReservationAgent:
         # Chroma, embeddings, and SQLite are synchronous; keep them off the server event loop.
         return await asyncio.to_thread(self._context_augmentation, state)
 
-    def _parking_assitant(self, state: ParkingState, config: RunnableConfig) -> dict[str, list[BaseMessage]]:
+    def _parking_assitant(self, state: ParkingState, config: RunnableConfig) -> dict:
+        if state.reservation_reply:
+            return self._collection_response(state)
         model = self._get_llm_client()
         messages = augmented_messages(self.config.system_prompt, state.messages, state.retrieval_context)
         try:
@@ -127,7 +247,9 @@ class ParkingSpaceReservationAgent:
             raise RuntimeError("Unable to get a response. Check the model configuration or retry the run.") from None
         return {"messages": [response]}
 
-    async def _aparking_assitant(self, state: ParkingState, config: RunnableConfig) -> dict[str, list[BaseMessage]]:
+    async def _aparking_assitant(self, state: ParkingState, config: RunnableConfig) -> dict:
+        if state.reservation_reply:
+            return self._collection_response(state)
         # Client construction can block; model requests use the native async API.
         model = await asyncio.to_thread(self._get_llm_client)
         messages = augmented_messages(self.config.system_prompt, state.messages, state.retrieval_context)
@@ -140,10 +262,14 @@ class ParkingSpaceReservationAgent:
     def _build_graph(self, checkpointer: BaseCheckpointSaver | None) -> CompiledStateGraph:
         builder = StateGraph(ParkingState, input_schema=ParkingMessages, output_schema=ParkingMessages)
         builder.add_node(
+            "reservation_collection", RunnableLambda(self._reservation_collection, afunc=self._areservation_collection)
+        )
+        builder.add_node(
             "context_augmentation", RunnableLambda(self._context_augmentation, afunc=self._acontext_augmentation)
         )
         builder.add_node("parking_assitant", RunnableLambda(self._parking_assitant, afunc=self._aparking_assitant))
-        builder.add_edge(START, "context_augmentation")
+        builder.add_edge(START, "reservation_collection")
+        builder.add_conditional_edges("reservation_collection", self._route_collection)
         builder.add_edge("context_augmentation", "parking_assitant")
         builder.add_edge("parking_assitant", END)
         # Agent Server supplies persistence. Injection is only needed for standalone use/tests.

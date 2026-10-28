@@ -4,9 +4,11 @@ import unittest
 from unittest.mock import Mock, patch
 
 from langchain.messages import AIMessage, HumanMessage, SystemMessage
+from langchain_core.runnables import RunnableLambda
 
 from commons.constants import SYSTEM_PROMPT
 from parking_agent import ParkingSpaceReservationAgent
+from reservation_collection import ReservationExtraction
 
 
 class SystemPromptTests(unittest.TestCase):
@@ -55,7 +57,9 @@ class SystemPromptTests(unittest.TestCase):
         model = Mock()
         response = AIMessage(content="Please provide your reservation period.")
         model.invoke.return_value = response
-        graph = ParkingSpaceReservationAgent(llm_client=model).graph
+        graph = ParkingSpaceReservationAgent(
+            llm_client=model, reservation_extractor=RunnableLambda(lambda _: ReservationExtraction())
+        ).graph
 
         for history in ([], [HumanMessage(content="I would like to reserve parking.")]):
             with self.subTest(history_length=len(history)):

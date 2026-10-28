@@ -4,14 +4,15 @@
 - This file applies to the entire repository unless a more specific AGENTS.md applies.
 - Python >=3.12 project with LangChain/LangGraph dependencies, shared constants,
   a user-facing system prompt, and a class-owned, import-safe conversational graph.
-  All four stages remain incomplete; prompt instructions do not implement enforcement.
+  All four stages remain incomplete; draft collection/validation/confirmation is code-enforced,
+  while information grounding and general injection/privacy guardrails remain prompt-guided.
 - Two-agent, graph-controlled coordination is accepted; detailed workflow topology remains open.
 - Verify the current scaffold before implementation; proposals are not accepted decisions.
 - Primary entry point: LangGraph CLI + LangSmith Studio (Chat/Graph modes), not a terminal loop.
   Studio is for development/internal testing; public UI and production access controls remain open.
 - `ParkingSpaceReservationAgent` in `parking_agent.py` owns immutable `AgentConfig`,
   shared clients/helpers, and deterministic graph construction. `app.py` exports its graph as `agent`.
-  The user-facing model-call node is named `parking_assitant` (user-selected spelling),
+  The user-facing response node is named `parking_assitant` (user-selected spelling),
   distinguishing it from the future administrator-communication agent.
   The default client uses the existing AzureChatOpenAI/DIAL prototype configuration;
   `AZURE_OPENAI_DEPLOYMENT` can override it. Final provider/model selection remains open.
@@ -26,7 +27,8 @@
   facts, owned by the agent as `static_store`/`dynamic_store`, configured by frozen
   `AgentConfig.storage`/`StorageConfig`. Embeddings/stores can be injected. Databases initialize
   on first storage operation, not import; embedding clients initialize on actual embedding.
-  Nonblank text turns read both stores; empty databases may initialize but are never seeded by chat.
+  Nonblank information turns read both stores; deterministic collection replies skip retrieval.
+  Empty databases may initialize but are never seeded by chat.
   Paths default to project-root `.data/` (git-ignored).
 - `storage/parking_spaces.json` replaces the incorrect guide corpus with eight mock
   individually identified spaces for `demo-central`. `ParkingSpace`/`SpaceFilters` in
@@ -43,16 +45,39 @@
   use `uv run --env-file .env python -m storage.seed`. Updates do not delete omitted IDs
    or enforce approval. `PARKING_DATA_MODEL.md` defines the minimal fields and future
    booking responsibilities; reservation storage/services are not implemented.
-- Graph: `START → context_augmentation → parking_assitant → END`. `context_augmentation.py`
-  deterministically queries Chroma with latest human text, then reads location-scoped SQLite
+- Graph: `START → reservation_collection`, then information turns use
+  `context_augmentation → parking_assitant → END`; deterministic collection replies go directly
+  to `parking_assitant → END`. `context_augmentation.py` queries Chroma using only fixed English
+  public-topic terms selected from bounded latest human text, never raw user/draft values;
+  unknown topics use `parking information`. It then reads location-scoped SQLite
   snapshots. Frozen `AgentConfig.context`/`ContextConfig` defaults: `demo-central` (env override
   `PARKING_LOCATION_ID`), K=4, query=2000 chars, evidence=12000 chars. Async storage runs off-loop.
   Whole snapshots have budget priority; missing/null/omitted facts are unknown. Dynamic facts are
   the only operational source by model instruction, overriding static prose/earlier chat without
   rewriting stores or interpreting schema-free availability into per-space filtering/allocation.
   Augment only a model-call copy of the latest user message; original history/IDs/blocks survive.
-  Internal `retrieval_context` replaces per turn; public schemas expose messages only, but
-  checkpoints/Studio/streams still expose evidence. No output-grounding/injection enforcement.
+  Internal `retrieval_context` refreshes on information turns and clears on collection turns.
+  Public schemas expose messages only, but checkpoints/Studio/streams expose private state/evidence.
+  No general information-output grounding/injection enforcement.
+- `reservation_collection.py` implements strict field proposals, a private draft/session, and
+  `ValidatedReservationRequest` (collected details, not a submission/booking). Checkpoint state
+  is plain JSON-compatible data, validated at node boundaries. Extraction sees latest human
+  text/current draft only; code accepts allowlisted verbatim values, not inferred details or
+  model authority fields. Information-only proposals cannot collect fields. Substring grounding
+  is not semantic extraction correctness. Async extraction is native; the wrapper is shared/lazy.
+  `PARKING_EXTRACTION_METHOD` defaults to `function_calling`, with explicit `json_schema` option;
+  actual endpoint support is required, never inferred or silently replaced with prose parsing.
+  Synthetic live smoke checks timed out (`OpenAITimeoutError`); compatibility remains unverified.
+- Collection states: idle/collecting/awaiting_confirmation/ready/cancelled. Code generates draft
+  ID/revision and renders the summary; `/confirm N` references the displayed revision, while
+  standalone yes/confirm/I confirm works only immediately after its summary. Corrections/clears,
+  rejected or unreadable updates, and trusted location/timezone changes invalidate confirmation.
+  `/new`, `/cancel`, `/clear FIELD`, and standalone no are code-controlled; cancellation does not
+  delete chat/checkpoint history. Required full start/end dates/times use explicit IANA zones or
+  UTC offsets, normalize to UTC, reject DST ambiguity/conflicts, and require future start/end>start.
+  Relative/shorthand periods require clarification, not LLM normalization. Provider/parser failures
+  clear confirmation and return sanitized feedback. No submission, allocation, approval, public-fact
+  writes, holds, MCP calls, or recording are implemented. Protect provider inputs/traces/checkpoints.
 
 ## Persistent project context
 - Keep project requirements, accepted decisions with rationale, current status, and
@@ -82,7 +107,8 @@
   in either public-fact store. Metadata validation/filtering is not PII detection or authorization.
   Reservation tool wiring, guardrails, access controls, safe logging, and evaluation remain open.
 - Retrieval is deterministic, not an LLM-selected tool. Follow-up rewriting, exact-ID extraction,
-  relevance/latency evaluation, PII query redaction, and token/history budgets remain open.
+  relevance/latency evaluation, expanded privacy-safe public intents, and token/history budgets remain open.
+  Raw queries are no longer forwarded; free-form/exact-ID retrieval is intentionally narrowed.
 - Separate storage initialization, reviewed seeding/ingestion, readiness validation, and refresh.
   Bootstrap/startup wiring remains open. The user wants static updates gated by administrator
   approval; clarify knowledge-change approval versus reservation approval before implementing writes.
@@ -172,7 +198,8 @@
 - Pending/refused requests must not be recorded as approved reservations.
 - Model-generated output is not authoritative approval or reservation data.
 - Final provider/model, communication channel, MCP implementation,
-  authentication, detailed states, timezone semantics, and file location remain undecided.
+  authentication, approval/recording lifecycle states, and file location remain undecided.
+  Collection timezone/confirmation semantics are implemented; submission must independently revalidate.
 - Document new decisions without turning optional specification examples into requirements.
 - Retain LICENSE (MIT) and existing copyright notices.
 

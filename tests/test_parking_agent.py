@@ -9,13 +9,14 @@ from threading import current_thread
 from unittest.mock import AsyncMock, Mock, patch
 
 from langchain.messages import AIMessage, HumanMessage
-from langchain_core.runnables import RunnableConfig
+from langchain_core.runnables import RunnableConfig, RunnableLambda
 from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.errors import NodeCancelledError
 from openai import APIError, OpenAIError
 
 from commons.constants import DIAL_GPT_LUNA_6
 from parking_agent import AgentConfig, ParkingSpaceReservationAgent, ParkingState
+from reservation_collection import ReservationExtraction
 from storage import StorageConfig
 
 
@@ -36,6 +37,7 @@ class ConfigTests(unittest.TestCase):
             "temperature",
             "timeout",
             "max_retries",
+            "extraction_method",
             "storage",
             "context",
         ):
@@ -46,6 +48,13 @@ class ConfigTests(unittest.TestCase):
 class AgentTests(unittest.TestCase):
     def setUp(self):
         # Model lifecycle checks must not touch project data or embedding providers.
+        extraction = patch.object(
+            ParkingSpaceReservationAgent,
+            "_get_reservation_extractor",
+            return_value=RunnableLambda(lambda _: ReservationExtraction()),
+        )
+        extraction.start()
+        self.addCleanup(extraction.stop)
         retrieval = patch("parking_agent.retrieve_context", return_value="")
         retrieval.start()
         self.addCleanup(retrieval.stop)
@@ -194,6 +203,13 @@ class AgentTests(unittest.TestCase):
 
 class AsyncAgentTests(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
+        extraction = patch.object(
+            ParkingSpaceReservationAgent,
+            "_get_reservation_extractor",
+            return_value=RunnableLambda(lambda _: ReservationExtraction()),
+        )
+        extraction.start()
+        self.addCleanup(extraction.stop)
         retrieval = patch("parking_agent.retrieve_context", return_value="")
         retrieval.start()
         self.addCleanup(retrieval.stop)

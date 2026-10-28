@@ -53,7 +53,30 @@ precedence over static operational claims through model instructions. It does no
 rewrite static documents, interpret availability into allocation/filtering rules,
 or establish snapshot freshness. Missing/null/budget-omitted facts mean unknown.
 
-## Reservation data (future, minimal contract)
+## Reservation draft collection (implemented)
+
+`reservation_collection.py` separates untrusted `ReservationExtraction`/`FieldUpdate` proposals,
+`ReservationDraft`, thread-scoped `ReservationSession`, and `ValidatedReservationRequest`.
+The graph checkpoints plain JSON-compatible state, not model response objects. Public graph
+input/output schemas expose only messages; private state is still visible in checkpoints/Studio/streams.
+
+Python generates draft IDs and revisions, accepts allowlisted verbatim user field values,
+preserves unmentioned values, validates full dates/times and explicit IANA/UTC-offset zones,
+and normalizes instants to UTC. Start must be in the future and end after start; ambiguous
+relative periods, clock-change times, or conflicting offsets require clarification.
+Names and identifiers are trimmed, bounded single-line strings; no plate-format requirement.
+No personal values are written to Chroma or public SQLite facts. Embedding queries contain
+only code-owned public-topic terms, never raw user text or draft fields.
+
+States are `idle`, `collecting`, `awaiting_confirmation`, `ready`, and `cancelled`.
+Code renders the exact summary and accepts only a later matching `/confirm N`, or a standalone
+affirmative immediately after that summary. Changed/cleared details and unreadable updates
+invalidate confirmation; negative confirmation, cancellation, and new drafts are code-controlled.
+`ready` is user-confirmed collected information, **not submission or human administrator approval**.
+General information turns still use RAG; deterministic collection replies skip retrieval.
+Substring grounding is not semantic extraction correctness; model behavior still needs evaluation.
+
+## Reservation ledger and approved records (future, minimal contract)
 
 Keep private requests separate from public facts. A request needs:
 
@@ -90,9 +113,10 @@ Initialization, reviewed seeding, readiness validation, and refresh remain separ
 Imports/chat do not seed databases. Static knowledge-change approval is separate
 from reservation approval; the seed CLI is trusted ingestion, not an approval system.
 
-The graph retrieves static spaces and dynamic snapshots before model calls, without
-modifying stored user messages. It does not allocate, contact an administrator,
-or record reservations. Detailed production inventory mirrors,
+The graph collects/validates drafts and retrieves public evidence for information answers,
+without modifying stored user messages. It does not submit, allocate, contact an administrator,
+or record reservations. The checkpointed draft is not an authoritative reservation ledger.
+Detailed production inventory mirrors,
 occupancy feeds, chargers, maintenance tables, tariffs, and hold-renewal services
 are outside the current scope. Implement only what is needed for the four stages.
 

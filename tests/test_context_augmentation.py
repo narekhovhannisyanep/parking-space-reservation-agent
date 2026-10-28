@@ -15,11 +15,12 @@ from unittest.mock import AsyncMock, Mock, patch
 
 from langchain_core.embeddings import Embeddings
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
-from langchain_core.runnables import RunnableConfig
+from langchain_core.runnables import RunnableConfig, RunnableLambda
 from langgraph.checkpoint.memory import InMemorySaver
 
 from context_augmentation import CONTEXT_HEADER, CONTEXT_RULES, ContextConfig, augmented_messages, retrieve_context
 from parking_agent import AgentConfig, ParkingSpaceReservationAgent
+from reservation_collection import ReservationExtraction
 from storage import DynamicParkingStore, ParkingSpace, StaticParkingStore, StorageConfig
 from storage.dynamic import DynamicFact
 
@@ -61,7 +62,7 @@ class ContextTests(unittest.TestCase):
         ]
         context = self.retrieve()
         data = decode(context)
-        self.static.search.assert_called_once_with("Parking near the entrance?", location_id="demo-central", k=4)
+        self.static.search.assert_called_once_with("entrance", location_id="demo-central", k=4)
         self.dynamic.list_facts.assert_called_once_with("demo-central")
         self.assertEqual(data["dynamic_facts"]["prices"]["value"]["hourly"], 9)
         self.assertEqual(data["dynamic_facts"]["availability"]["value"], {"A1": False})
@@ -234,6 +235,7 @@ class GraphContextTests(unittest.IsolatedAsyncioTestCase):
             static_store=self.static,
             dynamic_store=self.dynamic,
             checkpointer=InMemorySaver(),
+            reservation_extractor=RunnableLambda(lambda _: ReservationExtraction()),
         )
 
     def test_unseeded_chat_reads_empty_stores_without_embedding_or_defaults(self):

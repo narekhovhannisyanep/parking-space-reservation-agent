@@ -38,8 +38,10 @@ public customer interface: it provides access to thread state and debugging tool
 
 ## Agent structure
 
-- The conversational graph is `START → context_augmentation → parking_assitant → END`. `parking_assitant`
-  is the user-facing model-call node (not a tool node), with sync and native async implementations.
+- The graph starts with `reservation_collection`. Information turns continue through
+  `context_augmentation → parking_assitant → END`; deterministic collection/confirmation
+  replies go directly to `parking_assitant → END`, without retrieval or another model call.
+  `parking_assitant` retains its user-selected spelling and sync/native async implementations.
 - `app.py` is a thin entry point: one `ParkingSpaceReservationAgent` instance exports
   its compiled graph as `agent` for `langgraph.json`.
 - `parking_agent.py` owns `AgentConfig`, model initialization, and graph construction.
@@ -47,13 +49,15 @@ public customer interface: it provides access to thread state and debugging tool
   nodes. The default Azure/DIAL client is initialized on first use and reused;
   concurrent initialization is protected. Model calls use native async execution
   in server runs, with a 60-second timeout and up to two automatic retries.
-- Conversation and future per-request reservation state belong in LangGraph state,
+- Conversation and per-request reservation state belong in LangGraph state,
   scoped to a thread, **not** mutable attributes shared by all users on the class.
   `ParkingState` is a dataclass with a `messages` field and the `add_messages` reducer,
   retaining the same messages-based API/Studio schema and update-by-ID behavior.
   This avoids the `MessagesState` TypedDict protocol-bound incompatibility in `ty`.
-  Its internal `retrieval_context` field is replaced each turn; input/output schemas
-  expose only messages. Internal evidence is still visible in checkpoints/Studio/streams.
+  Internal `retrieval_context`, `reservation`, and `reservation_reply` are not public
+  input/output fields. `reservation` holds JSON-compatible private draft/request state,
+  validated at node boundaries, not custom Python checkpoint objects. Input/output schemas
+  expose only messages; checkpoints/Studio/streams still expose internal state and personal data.
   The class owns resources and workflow code; it is not a third orchestrator LLM.
 - `storage/` supplies class-owned `static_store` (persistent Chroma via
   `langchain-chroma`) and `dynamic_store` (Python's built-in SQLite). `AgentConfig.storage`
@@ -67,16 +71,18 @@ for standalone use. Embeddings and either storage helper can also be injected th
 the `embeddings`, `static_store`, and `dynamic_store` constructor arguments.
 The server export intentionally has no custom checkpointer:
 Agent Server supplies persistence. Without the server or an injected checkpointer,
-direct callers must supply conversation history themselves.
+information-only direct callers must supply conversation history themselves. Multi-turn
+draft collection/confirmation requires Agent Server or an injected checkpointer; messages
+alone cannot reconstruct the private draft from the public input schema.
 
 The four stages in `AGENTS.md` are the current scope: RAG/chat and required booking
 details, human administrator approval through a second agent, approved file recording,
 and LangGraph orchestration with privacy, evaluation, and integration/load testing.
 Real-world vehicle-fit and facility-management features are out of scope.
 
-This remains a conversational prototype with graph-wired static retrieval and dynamic
-snapshot context: live availability enforcement, administrator approval, allocation,
-and recording are **not implemented**.
+This prototype has graph-wired retrieval and structured reservation-detail collection.
+Live availability enforcement, submission, administrator approval, allocation, and recording
+are **not implemented**.
 It cannot complete reservations.
 Inputs are sent to the configured model provider. Keep secrets out of chat and leave
 LangSmith tracing disabled unless personal-data handling and access controls are configured.
@@ -88,19 +94,102 @@ graph errors do not replace access controls, checkpoint protection, or trace red
 Expected OpenAI API, client-configuration, and storage I/O/SQLite errors are sanitized; programming
 errors propagate so they can be diagnosed rather than silently masked.
 
+## Reservation draft collection
+
+`reservation_collection.py` defines strict, extra-field-rejecting models for proposed updates,
+the private draft, the collection session, and `ValidatedReservationRequest`. The latter is
+**collected information, not a submitted or approved reservation**. Session state is isolated
+by graph thread; no draft fields live on the shared agent instance or in either public store.
+
+1. A lazy structured-output wrapper uses the existing model to propose reservation intent and
+   field patches. Only the latest human text and current draft are supplied, not retrieved
+   evidence or assistant-generated facts. Information-only proposals cannot contain field updates.
+2. Python accepts only allowlisted fields whose proposed values occur verbatim in the latest
+   human text. It trims/bounds single-line values and rejects control characters and `|`.
+   Unmentioned fields are preserved; missing details are never filled with defaults. This
+   substring check prevents invented values, but cannot prove correct semantic field assignment;
+   users must review the summary. Model extraction accuracy still needs evaluation.
+3. Collect first name, surname, `car_number` (any user-provided vehicle identifier), and full
+   start/end dates and times. Current collection accepts `YYYY-MM-DD HH:MM` or ISO `T` timestamps,
+   optionally including seconds and explicit offsets. Date-only, shorthand, relative, and
+   ambiguous periods are clarified rather than interpreted by the model. No vehicle type,
+   measurements, or plate format is required.
+4. Resolve an explicit IANA timezone (such as `Asia/Yerevan`), `UTC`, or `UTC+04:00`/`+04:00`.
+   Start/end with explicit offsets need no separate timezone field. Ambiguous abbreviations,
+   nonexistent/ambiguous clock-change times, and timezone/offset conflicts are rejected;
+   supply explicit offsets to disambiguate daylight-saving transitions. IANA zones require
+   system timezone data; UTC/fixed offsets remain usable without it. Normalize validated
+   instants to UTC, require a future start and `end > start`, and revalidate before confirmation.
+5. Code generates a draft ID, revision, and exact confirmation summary. A later user reply
+   confirms the displayed revision. Corrections, clearing fields, rejected/unreadable updates,
+   and trusted location/timezone-data changes invalidate prior confirmation. A readiness
+   acknowledgment never claims submission, administrator approval, allocation, or recording.
+
+Example first message in Studio: “Reserve parking. First name Demo, surname Tester, car
+number demo-bicycle-1. Start 2030-06-01 10:00, end 2030-06-01 12:00, timezone UTC+04:00.”
+Use your actual future dates; this is synthetic example data.
+
+| Reply/command | Effect |
+| --- | --- |
+| `/confirm N` | Confirm the exact displayed draft revision N |
+| `yes`, `yes.`, `confirm`, `I confirm` | Confirm only immediately after the matching summary |
+| `no`, `no.` | Decline details confirmation; provide corrections or cancel |
+| A correction in natural language | Propose field changes; show a new summary after validation |
+| `/clear FIELD` | Remove one of `first_name`, `surname`, `car_number`, `start`, `end`, or `timezone` |
+| `/cancel` | Clear the current draft and confirmation, without deleting chat/checkpoint history |
+| `/new` | Start a new empty draft with a new code-generated ID |
+
+Collection statuses are `idle`, `collecting`, `awaiting_confirmation`, `ready`, and `cancelled`.
+`ready` means user-confirmed details for the **future** approval workflow. No reservation ledger,
+capacity hold, notification, approval decision, MCP call, or file entry is created. Future
+submission/allocation code must independently revalidate the request and trusted human decision.
+
+General information questions still use RAG, including while a draft is incomplete. Such turns
+make one extraction call plus the ordinary answer call; collection turns use one extraction call
+and a deterministic reply; standalone commands need neither a model call nor storage access.
+Extraction parsing/provider failures return a sanitized message and clear prior confirmation;
+unexpected programming errors propagate. Raw structured responses are not added to chat or stores,
+but callbacks/traces may still capture them. Protect provider inputs, checkpoints, streams,
+retention, and access controls before using real customer details.
+
+### Model compatibility
+
+`PARKING_EXTRACTION_METHOD` defaults to `function_calling`; `json_schema` is an explicit alternative.
+Both require actual support from the deployed Azure/DIAL model and endpoint. There is no silent
+fallback to prose parsing, and no assumption that Azure API compatibility guarantees support.
+The wrapper is initialized once per instance; tests can inject `reservation_extractor` and an
+aware `clock`. No new dependency or `.env` change is required.
+
+Offline tests do not prove deployment compatibility. An opt-in smoke suite uses synthetic data,
+mocked public stores, a 15-second timeout, and no retries:
+
+```bash
+LANGSMITH_TRACING=false LANGCHAIN_TRACING_V2=false PARKING_LIVE_TEST=1 \
+  uv run --no-sync --env-file .env python -m unittest discover -s tests -p test_reservation_model_live.py -v
+```
+
+These tests are skipped in normal offline runs. The implementation-time endpoint check timed
+out with `OpenAITimeoutError`; live compatibility and model accuracy remain unverified. Check
+endpoint connectivity/credentials, then rerun; change the extraction method only if the actual
+deployment supports it. The existing provider, `.env`, and databases were left unchanged.
+
 ## Persistent parking data
 
 Both stores are local and persistent across process restarts. Static demo data is
 available through an explicit seed command; dynamic data remains unseeded. Starting
-Studio does not initialize storage. A nonblank text chat turn reads both stores and
+Studio does not initialize storage. A nonblank information turn reads both stores and
 may create empty databases, but never seeds them. Writes require explicit trusted Python calls.
 
 ### Per-turn context augmentation
 
-`context_augmentation.py` implements deterministic retrieval before every model call:
+`context_augmentation.py` implements deterministic retrieval before information-answer model calls:
 
-1. Use the latest human message's text (not assistant/tool output or full history)
-   as a Chroma query, capped at 2,000 characters. Blank/nontext messages skip retrieval.
+1. Inspect up to 2,000 characters of the latest human text (not assistant/tool output
+   or full history). Build the embedding query only from fixed public-topic terms:
+   entrance, lift, location/directions, hours, prices, and availability. Unrecognized
+   text uses `parking information`; raw names, vehicle identifiers, dates, credentials,
+   and arbitrary user text are never forwarded as embedding-query values. Blank/nontext
+   messages skip retrieval. Deterministic collection replies bypass both stores.
 2. Retrieve up to four static spaces within the trusted deployment location, then
    read that location's `working_hours`, `prices`, and `availability` SQLite snapshots.
 3. Build JSON evidence with space IDs/sources and intact dynamic values/write timestamps.
@@ -110,7 +199,8 @@ may create empty databases, but never seeds them. Writes require explicit truste
 4. Append evidence to a **copy** of the latest human message for the model. Preserve
    its ID/metadata/multimodal blocks and leave stored conversation messages unchanged.
 
-Evidence is refreshed each turn, not accumulated in chat history. `ContextConfig`,
+Evidence is refreshed on information turns and cleared on collection turns, not accumulated
+in chat history. `ContextConfig`,
 available as `AgentConfig.context`, defaults to `location_id="demo-central"`,
 `retrieval_k=4`, `max_query_chars=2000`, and `max_context_chars=12000`. The latter
 caps the complete added evidence in characters, not tokens or total conversation size.
@@ -125,7 +215,11 @@ Async runs offload synchronous storage/embedding operations to a worker thread a
 retain native async model calls. Retrieval failures stop the model call instead of
 silently answering without evidence. Empty stores return explicit missing information
 without initializing an embedding client. Populated stores require embedding credentials
-and send the capped user query to the embedding provider; query truncation is **not** PII redaction.
+and send the fixed-term public query to the embedding provider. This allowlist is data minimization,
+not a general PII detector. It deliberately narrows free-form semantic retrieval and does not
+forward user-supplied exact space IDs. Follow-up rewriting, expanded public-intent handling,
+and retrieval-accuracy/latency evaluation remain needed; never restore raw query forwarding
+without an appropriate privacy boundary.
 
 Precedence and evidence-only instructions guide the model; they do not enforce output
 grounding or prevent prompt injection. Snapshots have no freshness/period guarantee.
@@ -305,7 +399,7 @@ and retention policies before production or customer-facing deployment.
 The user-facing prompt is defined in `commons/constants.py`. The approved architecture uses
 two agents coordinated by LangGraph/Python code. Allocation, approval enforcement, reservation
 state, and file formatting/writing are programmatic responsibilities, not LLM decisions.
-The current prototype does not yet implement those services.
+The current prototype implements draft collection/validation/confirmation only, not those services.
 
 ## Offline checks
 
@@ -326,6 +420,10 @@ dry-run behavior, invalid batches, repeatable ingestion, and unrelated-document 
 Context checks cover real Chroma/SQLite graph integration, dynamic precedence instructions,
 snapshot refresh/deletion, missing values, budgets, message preservation, sync/async parity,
 event-loop offloading, and thread/location isolation.
+Collection checks cover strict schemas, verbatim field grounding, required details, multi-turn
+updates, UTC normalization, clock-change ambiguity, future/ordered periods, confirmation revisions,
+corrections/clearing/cancellation, fail-closed extraction, information-turn continuity, native async
+execution, checkpoint round trips, thread isolation, public input filtering, and query privacy.
 They do not seed project data, make API calls, or evaluate live model behavior,
 semantic retrieval accuracy, or production security enforcement.
 
@@ -334,8 +432,8 @@ without changing the project dependencies:
 
 ```bash
 uv tool run ty check
-uv tool run ruff check app.py parking_agent.py context_augmentation.py commons storage tests
-uv tool run ruff format --check app.py parking_agent.py context_augmentation.py commons storage tests
+uv tool run ruff check app.py parking_agent.py reservation_collection.py context_augmentation.py commons storage tests
+uv tool run ruff format --check app.py parking_agent.py reservation_collection.py context_augmentation.py commons storage tests
 ```
 
 Ruff enables `BLE001` to prevent broad exception catches from returning.
@@ -346,4 +444,7 @@ References: [local server](https://docs.langchain.com/langsmith/local-server),
 [Chroma integration](https://docs.langchain.com/oss/python/integrations/vectorstores/chroma),
 [persistent Chroma clients](https://docs.trychroma.com/docs/run-chroma/clients),
 [Azure embeddings](https://reference.langchain.com/python/langchain-openai/embeddings/azure/AzureOpenAIEmbeddings),
-and [SQLite](https://docs.python.org/3/library/sqlite3.html).
+and [SQLite](https://docs.python.org/3/library/sqlite3.html),
+[structured model output](https://docs.langchain.com/oss/python/langchain/models#structured-output),
+[Azure structured-output methods](https://reference.langchain.com/python/langchain-openai/chat_models/azure/AzureChatOpenAI/with_structured_output),
+and [IANA timezone handling](https://docs.python.org/3/library/zoneinfo.html).

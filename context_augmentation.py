@@ -1,6 +1,7 @@
 """Deterministic public-evidence retrieval and model-only message augmentation."""
 
 import json
+import re
 import sqlite3
 from collections.abc import Sequence
 from dataclasses import dataclass
@@ -44,6 +45,24 @@ def latest_user_index(messages: Sequence[AnyMessage]) -> int | None:
     )
 
 
+def public_retrieval_query(text: str, max_chars: int) -> str:
+    """Embed only fixed public-topic terms, never raw text or draft values.
+
+    This small English vocabulary trades free-form/exact-ID semantic queries for
+    data minimization. It is not a PII detector: all output words are code-owned.
+    """
+    topics = (
+        ("entrance", r"\b(entrance|entry|enter|gate)\b"),
+        ("lift", r"\b(lift|elevator)\b"),
+        ("location directions", r"\b(location|where|directions|address|find)\b"),
+        ("working hours", r"\b(hours|open|close|opening|closing)\b"),
+        ("prices", r"\b(prices?|cost|fee|rates?|much|pay)\b"),
+        ("availability", r"\b(availability|available|free|spaces?|slots?|reserve|reservation|book)\b"),
+    )
+    query = " ".join(topic for topic, pattern in topics if re.search(pattern, text[:max_chars], flags=re.IGNORECASE))
+    return (query or "parking information")[:max_chars]
+
+
 def retrieve_context(
     messages: Sequence[AnyMessage],
     static_store: StaticParkingStore,
@@ -58,9 +77,10 @@ def retrieve_context(
     index = latest_user_index(messages)
     if index is None:
         return ""
-    query = messages[index].text.strip()[: config.max_query_chars]
-    if not query:
+    text = messages[index].text.strip()
+    if not text:
         return ""
+    query = public_retrieval_query(text, config.max_query_chars)
     try:
         documents = static_store.search(query, location_id=config.location_id, k=config.retrieval_k)
         facts = dynamic_store.list_facts(config.location_id)
