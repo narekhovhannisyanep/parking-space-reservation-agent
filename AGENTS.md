@@ -11,6 +11,8 @@
   Studio is for development/internal testing; public UI and production access controls remain open.
 - `ParkingSpaceReservationAgent` in `parking_agent.py` owns immutable `AgentConfig`,
   shared clients/helpers, and deterministic graph construction. `app.py` exports its graph as `agent`.
+  The user-facing model-call node is named `parking_assitant` (user-selected spelling),
+  distinguishing it from the future administrator-communication agent.
   The default client uses the existing AzureChatOpenAI/DIAL prototype configuration;
   `AZURE_OPENAI_DEPLOYMENT` can override it. Final provider/model selection remains open.
 - Conversation/request state belongs to graph threads, never shared mutable instance attributes.

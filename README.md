@@ -38,6 +38,8 @@ public customer interface: it provides access to thread state and debugging tool
 
 ## Agent structure
 
+- The conversational graph is `START → parking_assitant → END`. `parking_assitant`
+  is the user-facing model-call node (not a tool node), with sync and native async implementations.
 - `app.py` is a thin entry point: one `ParkingSpaceReservationAgent` instance exports
   its compiled graph as `agent` for `langgraph.json`.
 - `parking_agent.py` owns `AgentConfig`, model initialization, and graph construction.

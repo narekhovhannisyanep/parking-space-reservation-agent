@@ -96,7 +96,7 @@ class ParkingSpaceReservationAgent:
                     raise RuntimeError("Unable to initialize the model. Check the model configuration.") from None
             return self._llm_client
 
-    def _assistant(self, state: ParkingState, config: RunnableConfig) -> dict[str, list[BaseMessage]]:
+    def _parking_assitant(self, state: ParkingState, config: RunnableConfig) -> dict[str, list[BaseMessage]]:
         model = self._get_llm_client()
         messages = [SystemMessage(self.config.system_prompt), *state.messages]
         try:
@@ -106,7 +106,7 @@ class ParkingSpaceReservationAgent:
             raise RuntimeError("Unable to get a response. Check the model configuration or retry the run.") from None
         return {"messages": [response]}
 
-    async def _aassistant(self, state: ParkingState, config: RunnableConfig) -> dict[str, list[BaseMessage]]:
+    async def _aparking_assitant(self, state: ParkingState, config: RunnableConfig) -> dict[str, list[BaseMessage]]:
         # Client construction can block; model requests use the native async API.
         model = await asyncio.to_thread(self._get_llm_client)
         messages = [SystemMessage(self.config.system_prompt), *state.messages]
@@ -118,8 +118,8 @@ class ParkingSpaceReservationAgent:
 
     def _build_graph(self, checkpointer: BaseCheckpointSaver | None) -> CompiledStateGraph:
         builder = StateGraph(ParkingState)
-        builder.add_node("assistant", RunnableLambda(self._assistant, afunc=self._aassistant))
-        builder.add_edge(START, "assistant")
-        builder.add_edge("assistant", END)
+        builder.add_node("parking_assitant", RunnableLambda(self._parking_assitant, afunc=self._aparking_assitant))
+        builder.add_edge(START, "parking_assitant")
+        builder.add_edge("parking_assitant", END)
         # Agent Server supplies persistence. Injection is only needed for standalone use/tests.
         return builder.compile(checkpointer=checkpointer)
