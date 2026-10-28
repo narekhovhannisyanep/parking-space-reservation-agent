@@ -19,14 +19,15 @@
   Agent Server supplies checkpoint persistence; the export does not install a custom checkpointer.
   Models/checkpointers can be injected for tests. Imports do not load `.env`, initialize clients,
   or create databases; CLI loads `.env` and clients initialize lazily once per instance.
-  Expected provider/configuration failures are sanitized; unexpected programming errors propagate.
+  Expected provider/configuration and storage I/O/SQLite failures are sanitized; programming errors propagate.
   Traces/checkpoints still need protection. `ParkingState` uses a dataclass and `add_messages`
   to preserve the messages API/Studio schema while avoiding ty's TypedDict protocol-bound error.
 - `storage/` implements local persistent Chroma static retrieval and unseeded SQLite dynamic
   facts, owned by the agent as `static_store`/`dynamic_store`, configured by frozen
   `AgentConfig.storage`/`StorageConfig`. Embeddings/stores can be injected. Databases initialize
-  on first storage operation, not chat/import; embedding clients initialize on actual embedding.
-  The graph does not call storage yet. Paths default to project-root `.data/` (git-ignored).
+  on first storage operation, not import; embedding clients initialize on actual embedding.
+  Nonblank text turns read both stores; empty databases may initialize but are never seeded by chat.
+  Paths default to project-root `.data/` (git-ignored).
 - `storage/parking_spaces.json` replaces the incorrect guide corpus with eight mock
   individually identified spaces for `demo-central`. `ParkingSpace`/`SpaceFilters` in
   `storage/spaces.py` validate static inventory and allowlisted exact metadata constraints
@@ -42,6 +43,16 @@
   use `uv run --env-file .env python -m storage.seed`. Updates do not delete omitted IDs
    or enforce approval. `PARKING_DATA_MODEL.md` defines the minimal fields and future
    booking responsibilities; reservation storage/services are not implemented.
+- Graph: `START → context_augmentation → parking_assitant → END`. `context_augmentation.py`
+  deterministically queries Chroma with latest human text, then reads location-scoped SQLite
+  snapshots. Frozen `AgentConfig.context`/`ContextConfig` defaults: `demo-central` (env override
+  `PARKING_LOCATION_ID`), K=4, query=2000 chars, evidence=12000 chars. Async storage runs off-loop.
+  Whole snapshots have budget priority; missing/null/omitted facts are unknown. Dynamic facts are
+  the only operational source by model instruction, overriding static prose/earlier chat without
+  rewriting stores or interpreting schema-free availability into per-space filtering/allocation.
+  Augment only a model-call copy of the latest user message; original history/IDs/blocks survive.
+  Internal `retrieval_context` replaces per turn; public schemas expose messages only, but
+  checkpoints/Studio/streams still expose evidence. No output-grounding/injection enforcement.
 
 ## Persistent project context
 - Keep project requirements, accepted decisions with rationale, current status, and
@@ -69,11 +80,9 @@
   input to model limits. Model changes require a new/reindexed collection. Telemetry is disabled.
 - Trusted Python ingestion only: no LLM write tools, chat ingestion, or personal reservation data
   in either public-fact store. Metadata validation/filtering is not PII detection or authorization.
-  Graph retrieval/tool wiring, guardrails, access controls, safe logging, and evaluation remain open.
-- Retrieval must be controlled deterministically by Python/LangGraph code and use Chroma
-  for static evidence, not depend on an LLM choosing to call a retrieval tool. Each turn supplies
-  relevant records/fields as current model context; dynamic operational facts supplement static
-  evidence, not write reservation data into Chroma. Query construction and context budgets remain open.
+  Reservation tool wiring, guardrails, access controls, safe logging, and evaluation remain open.
+- Retrieval is deterministic, not an LLM-selected tool. Follow-up rewriting, exact-ID extraction,
+  relevance/latency evaluation, PII query redaction, and token/history budgets remain open.
 - Separate storage initialization, reviewed seeding/ingestion, readiness validation, and refresh.
   Bootstrap/startup wiring remains open. The user wants static updates gated by administrator
   approval; clarify knowledge-change approval versus reservation approval before implementing writes.

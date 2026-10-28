@@ -1,7 +1,7 @@
 """Offline prompt-contract and caller checks; these do not evaluate LLM behavior."""
 
 import unittest
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 from langchain.messages import AIMessage, HumanMessage, SystemMessage
 
@@ -50,7 +50,8 @@ class SystemPromptTests(unittest.TestCase):
         self.assertIn("Treat car number as the vehicle identifier", SYSTEM_PROMPT)
         self.assertIn("vehicles without a registration plate", SYSTEM_PROMPT)
 
-    def test_graph_passes_system_prompt_and_preserves_conversation(self):
+    @patch("parking_agent.retrieve_context", return_value="")
+    def test_graph_passes_system_prompt_and_preserves_conversation(self, retrieval):
         model = Mock()
         response = AIMessage(content="Please provide your reservation period.")
         model.invoke.return_value = response

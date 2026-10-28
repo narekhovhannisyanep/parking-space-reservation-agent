@@ -40,14 +40,18 @@ an older collection was used. Do not upsert new records over old-schema IDs in t
 old collection: Chroma merges metadata and could retain removed restrictions.
 Existing `.env` and databases are unchanged; see the README migration instructions.
 
-## Public operational facts (implemented storage only)
+## Public operational facts (storage and context retrieval implemented)
 
 `DynamicParkingStore` stores location-scoped `working_hours`, `prices`, and
 `availability` as JSON snapshots in SQLite, with UTC write timestamps. It remains
 unseeded and is not an authoritative booking ledger. Missing data means unknown.
 No customer details, administrator decisions, or reservation requests belong here
 or in Chroma. Required general information and location facts must also be supplied
-when wiring RAG; the space fixture alone does not cover every required question.
+for complete RAG coverage; the space fixture alone does not cover every required question.
+Per-turn context supplies these snapshots intact with write timestamps, giving them
+precedence over static operational claims through model instructions. It does not
+rewrite static documents, interpret availability into allocation/filtering rules,
+or establish snapshot freshness. Missing/null/budget-omitted facts mean unknown.
 
 ## Reservation data (future, minimal contract)
 
@@ -86,8 +90,9 @@ Initialization, reviewed seeding, readiness validation, and refresh remain separ
 Imports/chat do not seed databases. Static knowledge-change approval is separate
 from reservation approval; the seed CLI is trusted ingestion, not an approval system.
 
-The graph currently does not retrieve storage facts, allocate, contact an
-administrator, or record reservations. Detailed production inventory mirrors,
+The graph retrieves static spaces and dynamic snapshots before model calls, without
+modifying stored user messages. It does not allocate, contact an administrator,
+or record reservations. Detailed production inventory mirrors,
 occupancy feeds, chargers, maintenance tables, tariffs, and hold-renewal services
 are outside the current scope. Implement only what is needed for the four stages.
 

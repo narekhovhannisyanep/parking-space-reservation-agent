@@ -38,7 +38,7 @@ public customer interface: it provides access to thread state and debugging tool
 
 ## Agent structure
 
-- The conversational graph is `START → parking_assitant → END`. `parking_assitant`
+- The conversational graph is `START → context_augmentation → parking_assitant → END`. `parking_assitant`
   is the user-facing model-call node (not a tool node), with sync and native async implementations.
 - `app.py` is a thin entry point: one `ParkingSpaceReservationAgent` instance exports
   its compiled graph as `agent` for `langgraph.json`.
@@ -52,6 +52,8 @@ public customer interface: it provides access to thread state and debugging tool
   `ParkingState` is a dataclass with a `messages` field and the `add_messages` reducer,
   retaining the same messages-based API/Studio schema and update-by-ID behavior.
   This avoids the `MessagesState` TypedDict protocol-bound incompatibility in `ty`.
+  Its internal `retrieval_context` field is replaced each turn; input/output schemas
+  expose only messages. Internal evidence is still visible in checkpoints/Studio/streams.
   The class owns resources and workflow code; it is not a third orchestrator LLM.
 - `storage/` supplies class-owned `static_store` (persistent Chroma via
   `langchain-chroma`) and `dynamic_store` (Python's built-in SQLite). `AgentConfig.storage`
@@ -72,8 +74,9 @@ details, human administrator approval through a second agent, approved file reco
 and LangGraph orchestration with privacy, evaluation, and integration/load testing.
 Real-world vehicle-fit and facility-management features are out of scope.
 
-This remains a conversational prototype with an explicitly seedable storage layer: graph-wired RAG,
-live availability, administrator approval, allocation, and recording are **not implemented**.
+This remains a conversational prototype with graph-wired static retrieval and dynamic
+snapshot context: live availability enforcement, administrator approval, allocation,
+and recording are **not implemented**.
 It cannot complete reservations.
 Inputs are sent to the configured model provider. Keep secrets out of chat and leave
 LangSmith tracing disabled unless personal-data handling and access controls are configured.
@@ -82,15 +85,53 @@ Studio can still connect with tracing disabled. This does not prevent sending in
 to your model provider or saving them in local checkpoints. If you enable tracing,
 prompts, responses, and personal data may also be stored in LangSmith. Sanitized
 graph errors do not replace access controls, checkpoint protection, or trace redaction.
-Only expected OpenAI API and client-configuration errors are sanitized; programming
+Expected OpenAI API, client-configuration, and storage I/O/SQLite errors are sanitized; programming
 errors propagate so they can be diagnosed rather than silently masked.
 
 ## Persistent parking data
 
 Both stores are local and persistent across process restarts. Static demo data is
 available through an explicit seed command; dynamic data remains unseeded. Starting
-Studio or sending a chat message does not seed or create either database: the graph
-does not yet call these helpers. Writes require explicit trusted Python calls.
+Studio does not initialize storage. A nonblank text chat turn reads both stores and
+may create empty databases, but never seeds them. Writes require explicit trusted Python calls.
+
+### Per-turn context augmentation
+
+`context_augmentation.py` implements deterministic retrieval before every model call:
+
+1. Use the latest human message's text (not assistant/tool output or full history)
+   as a Chroma query, capped at 2,000 characters. Blank/nontext messages skip retrieval.
+2. Retrieve up to four static spaces within the trusted deployment location, then
+   read that location's `working_hours`, `prices`, and `availability` SQLite snapshots.
+3. Build JSON evidence with space IDs/sources and intact dynamic values/write timestamps.
+   Dynamic facts are the only operational-fact source: model instructions give them
+   precedence over conflicting static prose or earlier chat. Missing/null values mean
+   unknown, never free/open/available. Static documents and databases are not rewritten.
+4. Append evidence to a **copy** of the latest human message for the model. Preserve
+   its ID/metadata/multimodal blocks and leave stored conversation messages unchanged.
+
+Evidence is refreshed each turn, not accumulated in chat history. `ContextConfig`,
+available as `AgentConfig.context`, defaults to `location_id="demo-central"`,
+`retrieval_k=4`, `max_query_chars=2000`, and `max_context_chars=12000`. The latter
+caps the complete added evidence in characters, not tokens or total conversation size.
+Whole dynamic snapshots get budget priority; oversized records are omitted with
+explicit status/counts rather than misleading partial values. All three public dynamic
+fact kinds are supplied because intent-specific schemas/routing remain undecided.
+`PARKING_LOCATION_ID` overrides the deployment scope; user text does not change it.
+Location scoping is not authorization. Follow-up query rewriting and exact-ID extraction
+are not implemented; model history remains available for conversation understanding.
+
+Async runs offload synchronous storage/embedding operations to a worker thread and
+retain native async model calls. Retrieval failures stop the model call instead of
+silently answering without evidence. Empty stores return explicit missing information
+without initializing an embedding client. Populated stores require embedding credentials
+and send the capped user query to the embedding provider; query truncation is **not** PII redaction.
+
+Precedence and evidence-only instructions guide the model; they do not enforce output
+grounding or prevent prompt injection. Snapshots have no freshness/period guarantee.
+Availability payloads remain schema-free public observations: this change does not
+interpret them as per-space allocation rules, filter unavailable candidates, or promise
+booking availability. Top-K retrieval is not an exhaustive inventory/count.
 
 ### Static space inventory: Chroma
 
@@ -168,7 +209,7 @@ from a newer file; delete obsolete IDs explicitly through `delete_documents`.
 
 For retrieval, pass `location_id="demo-central"` and optional validated `SpaceFilters`
 to `static_store.search(...)`.
-The chat graph still does not retrieve these documents automatically.
+The chat graph retrieves automatically within `AgentConfig.context.location_id`.
 
 To expand the dataset, append reviewed structured spaces using the exact inventory
 fields listed in [PARKING_DATA_MODEL.md](PARKING_DATA_MODEL.md); do not hand-author a
@@ -232,6 +273,7 @@ Optional environment settings are documented in `.env.example`:
 | `PARKING_CHROMA_DIRECTORY` | `.data/chroma` |
 | `PARKING_CHROMA_COLLECTION` | `parking_spaces_v2` |
 | `PARKING_SQLITE_PATH` | `.data/parking.sqlite3` |
+| `PARKING_LOCATION_ID` | `demo-central` |
 | `AZURE_OPENAI_EMBEDDING_DEPLOYMENT` | `DIAL_TEXT_EMBEDDING_3_SMALL` |
 | `AZURE_OPENAI_EMBEDDING_MODEL` | `TEXT_EMBEDDING_3_SMALL` |
 
@@ -240,8 +282,8 @@ The CLI loads `.env`; direct Python callers must load/provide their environment
 themselves. Existing `.env` values are unchanged. Run `uv sync --dev` to install the
 updated lockfile. SQLite needs no extra package; Chroma needs no standalone server.
 Chroma persists automatically and its local client follows the owning process's
-lifetime. These synchronous storage APIs should run off the event loop when later
-wired into async graph nodes. Back up the databases using database-supported backup
+lifetime. Async context augmentation runs synchronous storage APIs off the event loop.
+Back up the databases using database-supported backup
 procedures; don't delete live files or copy a partially written directory.
 
 Initialization, reviewed seeding/ingestion, readiness validation, and refresh are
@@ -281,6 +323,9 @@ initialization, input validation, concurrent workers, and transaction cleanup.
 Inventory/seed checks also cover the eight-space fixture, strict fields/identity,
 minimal vehicle-agnostic fields, exact space lookup, old-schema exclusion, extensibility,
 dry-run behavior, invalid batches, repeatable ingestion, and unrelated-document preservation.
+Context checks cover real Chroma/SQLite graph integration, dynamic precedence instructions,
+snapshot refresh/deletion, missing values, budgets, message preservation, sync/async parity,
+event-loop offloading, and thread/location isolation.
 They do not seed project data, make API calls, or evaluate live model behavior,
 semantic retrieval accuracy, or production security enforcement.
 
@@ -289,8 +334,8 @@ without changing the project dependencies:
 
 ```bash
 uv tool run ty check
-uv tool run ruff check app.py parking_agent.py commons storage tests
-uv tool run ruff format --check app.py parking_agent.py commons storage tests
+uv tool run ruff check app.py parking_agent.py context_augmentation.py commons storage tests
+uv tool run ruff format --check app.py parking_agent.py context_augmentation.py commons storage tests
 ```
 
 Ruff enables `BLE001` to prevent broad exception catches from returning.

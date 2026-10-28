@@ -37,13 +37,20 @@ class ConfigTests(unittest.TestCase):
             "timeout",
             "max_retries",
             "storage",
+            "context",
         ):
             with self.subTest(field=field_name), self.assertRaises(FrozenInstanceError):
                 setattr(config, field_name, None)
 
 
 class AgentTests(unittest.TestCase):
-    def test_agent_owns_lazy_storage_without_changing_chat_behavior(self):
+    def setUp(self):
+        # Model lifecycle checks must not touch project data or embedding providers.
+        retrieval = patch("parking_agent.retrieve_context", return_value="")
+        retrieval.start()
+        self.addCleanup(retrieval.stop)
+
+    def test_agent_owns_lazy_storage_without_initializing_on_construction(self):
         with patch("storage.static.Chroma") as chroma, patch("storage.dynamic.sqlite3.connect") as sqlite:
             model = Mock()
             model.invoke.return_value = AIMessage(content="Hello")
@@ -186,6 +193,11 @@ class AgentTests(unittest.TestCase):
 
 
 class AsyncAgentTests(unittest.IsolatedAsyncioTestCase):
+    def setUp(self):
+        retrieval = patch("parking_agent.retrieve_context", return_value="")
+        retrieval.start()
+        self.addCleanup(retrieval.stop)
+
     async def test_lazy_async_initialization_runs_off_the_event_loop_and_is_reused(self):
         loop_thread = current_thread()
         model = Mock()
