@@ -44,6 +44,12 @@ class SystemPromptTests(unittest.TestCase):
                 self.assertIn(boundary, SYSTEM_PROMPT)
         self.assertNotIn("|", SYSTEM_PROMPT)
 
+    def test_prompt_uses_vehicle_agnostic_project_assumption(self):
+        self.assertIn("Every space is assumed to fit any vehicle", SYSTEM_PROMPT)
+        self.assertIn("Do not ask for vehicle type, dimensions, or features", SYSTEM_PROMPT)
+        self.assertIn("Treat car number as the vehicle identifier", SYSTEM_PROMPT)
+        self.assertIn("vehicles without a registration plate", SYSTEM_PROMPT)
+
     def test_graph_passes_system_prompt_and_preserves_conversation(self):
         model = Mock()
         response = AIMessage(content="Please provide your reservation period.")

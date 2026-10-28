@@ -67,6 +67,11 @@ The server export intentionally has no custom checkpointer:
 Agent Server supplies persistence. Without the server or an injected checkpointer,
 direct callers must supply conversation history themselves.
 
+The four stages in `AGENTS.md` are the current scope: RAG/chat and required booking
+details, human administrator approval through a second agent, approved file recording,
+and LangGraph orchestration with privacy, evaluation, and integration/load testing.
+Real-world vehicle-fit and facility-management features are out of scope.
+
 This remains a conversational prototype with an explicitly seedable storage layer: graph-wired RAG,
 live availability, administrator approval, allocation, and recording are **not implemented**.
 It cannot complete reservations.
@@ -87,16 +92,29 @@ available through an explicit seed command; dynamic data remains unseeded. Start
 Studio or sending a chat message does not seed or create either database: the graph
 does not yet call these helpers. Writes require explicit trusted Python calls.
 
-### Static information: Chroma
+### Static space inventory: Chroma
 
 The exported instance's `app.parking_agent.static_store` exposes `upsert_documents(documents)`,
-`search(query, location_id=..., k=4)`, and `delete_documents(ids)`.
-Ingestion accepts LangChain `Document` objects with a stable, nonblank `id`, nonblank
-text, and exactly these nonblank string metadata fields:
+`search(query, location_id=..., k=4, filters=SpaceFilters(...))`, and `delete_documents(ids)`.
+`ParkingSpace` in `storage/spaces.py` validates structured inventory and generates
+LangChain documents with canonical `{location_id}:space:{space_id}` IDs.
 
-- `location_id`: an explicit parking-location identifier.
-- `source`: the reviewed public information source.
-- `topic`: `general`, `location`, or `booking_process`.
+- Identity: `space_id`, `location_id`, `label`.
+- Search/context/provenance: concise public `description` and reviewed `source`.
+
+Every space is assumed to fit any vehicle for this project. There are no dimensions,
+vehicle categories, or accessibility/charging/covered flags. Directions stay in the
+description; no separate level/zone fields are needed. This assumption simplifies
+the prototype; it is not a physical-fit guarantee for a real parking facility.
+The required `car_number` means a user-provided vehicle identifier even for vehicles
+without plates; booking does not require vehicle type, measurements, or plate format.
+
+Generated Chroma metadata has `record_type=parking_space` and integer `schema_version=2`.
+`SpaceFilters` allows only exact `space_id` lookup. Filters run **before** semantic
+ranking and always retain location/type/schema scope.
+This is static candidate retrieval, **not** live availability or allocation enforcement.
+See [PARKING_DATA_MODEL.md](PARKING_DATA_MODEL.md) for the minimal field contract and
+future booking responsibilities.
 
 Repeated upserts replace documents with the same ID; IDs are unique across the whole
 collection, so include location in IDs when appropriate. Searches filter by explicit
@@ -111,33 +129,22 @@ documents to the configured embedding model's input limits. Changing the embeddi
 model requires reindexing into a new collection, even if vector dimensions match.
 Expected embedding configuration/API errors are sanitized.
 
-### Seed the static examples
+### Seed the mock space inventory
 
-`storage/static_examples.json` contains **30 example records** for one fictional
-location, `demo-central`, with source `demo-parking-guide-v1`:
+`storage/parking_spaces.json` contains **eight individually identified mock spaces**
+for the fictional `demo-central` location, with source `mock-space-inventory-v2`.
+They differ only by identity and public directions, not by which vehicles can use them.
+There are no invented tram/toilet guides or workflow instructions in the corpus,
+and no prices, working hours, customer details, availability flags, holds, or reservations.
+Individual-space allocation is the chosen model; production location count remains open.
 
-- 10 general records: overview, vehicle types, height clearance, accessibility,
-  charging facilities, static/dynamic fact boundaries, speed limits, bay-use rules,
-  belongings, and visitor toilets.
-- 9 location records: address, vehicle entrance/exit, pedestrian access,
-  public transport, wayfinding, visitor assistance, lift location, and motorcycle parking.
-- 11 booking-process records: required details, incomplete requests, pending approval,
-  refusal, explicit human approval, recording outcomes, availability changing during
-  approval, period clarification, corrected details, privacy, and payment-versus-approval.
-
-Records read as normal parking-guide entries, without repeated demo disclaimers.
-Booking-state records describe the intended workflow,
-not real requests, implemented services, or authoritative approval decisions. No personal
-reservation data, live prices, working hours, or availability snapshots are seeded.
-One demo location does not decide the eventual production parking topology.
-
-The curated records support a focused static-retrieval showcase,
-not evidence of retrieval accuracy or complete application functionality. Demonstrating
-hours, prices, and availability needs separate dynamic fixtures; approval and recording
-need executable workflow scenarios, not more static records. Evaluate with a separate
-question/reference-answer dataset, including paraphrases, multi-document questions,
-and unknown answers. Increase the corpus when a planned demo question lacks coverage
-or a retrieval test needs more realistic distractors, rather than to meet an arbitrary count.
+The smaller corpus demonstrates space retrieval and exact filtering, not complete
+application functionality or semantic accuracy. Per-turn token usage depends on
+selected context, not the total number of indexed spaces. Avoid merging independent
+spaces into one large document; retain individually filterable identities. Evaluate
+with a separate question/expected-space dataset, including exact IDs, missing spaces,
+paraphrases, and unavailable candidates once dynamic wiring exists. The fixture alone
+does not cover all required general information, location, hours, or price questions.
 
 Validate offline first, from the project root:
 
@@ -145,8 +152,8 @@ Validate offline first, from the project root:
 .venv/bin/python -m storage.seed --dry-run
 ```
 
-Load the existing `.env` explicitly and embed/upsert the examples into the configured
-Chroma collection (defaults to `parking_static` under `.data/chroma`):
+Load the existing `.env` explicitly and embed/upsert the spaces into the configured
+Chroma collection (defaults to `parking_spaces_v2` under `.data/chroma`):
 
 ```bash
 uv run --env-file .env python -m storage.seed
@@ -155,20 +162,22 @@ uv run --env-file .env python -m storage.seed
 This calls the configured embedding provider and requires the Azure/DIAL settings
 described above. Application imports and the seed module do not load `.env` themselves.
 The command validates the entire file before initializing storage. Repeating it updates
-the same stable `demo-central:*` IDs rather than creating duplicates; unrelated IDs are
+the same stable `demo-central:space:*` IDs rather than creating duplicates; unrelated IDs are
 preserved, and SQLite is untouched. It does not delete previously seeded records omitted
 from a newer file; delete obsolete IDs explicitly through `delete_documents`.
 
-For retrieval, pass `location_id="demo-central"` to `static_store.search(...)`.
+For retrieval, pass `location_id="demo-central"` and optional validated `SpaceFilters`
+to `static_store.search(...)`.
 The chat graph still does not retrieve these documents automatically.
 
-To expand the dataset, append reviewed records to the JSON array with unique,
-stable IDs and the existing `id`, `page_content`, and `metadata` structure. There is no
-fixed record-count limit. You can also supply a different reviewed file:
+To expand the dataset, append reviewed structured spaces using the exact inventory
+fields listed in [PARKING_DATA_MODEL.md](PARKING_DATA_MODEL.md); do not hand-author a
+second `page_content`/metadata copy. There is no fixed record-count limit. You can
+also supply a different reviewed inventory file:
 
 ```bash
-.venv/bin/python -m storage.seed --file path/to/reviewed-static.json --dry-run
-uv run --env-file .env python -m storage.seed --file path/to/reviewed-static.json
+.venv/bin/python -m storage.seed --file path/to/reviewed-spaces.json --dry-run
+uv run --env-file .env python -m storage.seed --file path/to/reviewed-spaces.json
 ```
 
 The bundled file resolves relative to the seed module, independent of the working
@@ -176,6 +185,23 @@ directory; an explicit `--file` path resolves relative to your current working d
 Keep each document within the embedding model's input limits; automatic chunking is
 not implemented. Review custom text for sensitive information and source authenticity:
 schema validation alone does not enforce either. Keep demo data out of production.
+
+#### Migration from previous corpora
+
+The old guide and dimension/vehicle-specific schemas are no longer accepted.
+The default collection is now `parking_spaces_v2`, leaving previously persisted
+`parking_static` and `parking_spaces_v1` data untouched. If your existing `.env`
+sets an older collection, change `PARKING_CHROMA_COLLECTION` to `parking_spaces_v2`
+and run the seed command. Use a fresh collection: Chroma merges metadata, so
+upserting over old-schema IDs in an old collection can retain removed restrictions.
+Search filters exclude untouched old-schema records, but are not a metadata migration.
+Existing `.env` and project databases are not changed by this refactor.
+
+Retire the unused
+collection through a reviewed maintenance operation after backup; never delete a
+live database directory to migrate. Updating the JSON does not delete previously
+indexed spaces omitted from it. Removal/update approval and ingestion synchronization
+are separate future work; the seed CLI itself does not enforce human approval.
 
 ### Dynamic information: SQLite
 
@@ -188,12 +214,14 @@ or an empty list, never defaults such as zero available spaces. Writes are atomi
 upserts with parameter-bound SQL; connections are committed/rolled back and closed
 per operation, rather than shared across graph workers.
 
-JSON snapshots deliberately leave the domain schema open until real sources and
-parking topology are decided. Payloads must be JSON-compatible, with string object
+These existing JSON snapshots remain public operational observations, not private
+reservation storage. See [PARKING_DATA_MODEL.md](PARKING_DATA_MODEL.md).
+Payloads must be JSON-compatible, with string object
 keys and finite numbers. `updated_at` is not a freshness guarantee; refresh rules
 and upstream observation times remain future work. An availability snapshot is
-**not** an allocation, hold, or reservation ledger. Both stores require explicit
-location IDs without deciding whether the deployed system has one or many locations.
+**not** an allocation, hold, or reservation ledger. Availability for a requested period
+must eventually account for overlapping confirmed reservations and any chosen pending
+holds. Public operational snapshots must never contain private request data.
 
 ### Configuration and lifecycle
 
@@ -202,7 +230,7 @@ Optional environment settings are documented in `.env.example`:
 | Setting | Default |
 | --- | --- |
 | `PARKING_CHROMA_DIRECTORY` | `.data/chroma` |
-| `PARKING_CHROMA_COLLECTION` | `parking_static` |
+| `PARKING_CHROMA_COLLECTION` | `parking_spaces_v2` |
 | `PARKING_SQLITE_PATH` | `.data/parking.sqlite3` |
 | `AZURE_OPENAI_EMBEDDING_DEPLOYMENT` | `DIAL_TEXT_EMBEDDING_3_SMALL` |
 | `AZURE_OPENAI_EMBEDDING_MODEL` | `TEXT_EMBEDDING_3_SMALL` |
@@ -215,6 +243,12 @@ Chroma persists automatically and its local client follows the owning process's
 lifetime. These synchronous storage APIs should run off the event loop when later
 wired into async graph nodes. Back up the databases using database-supported backup
 procedures; don't delete live files or copy a partially written directory.
+
+Initialization, reviewed seeding/ingestion, readiness validation, and refresh are
+separate operations. Startup bootstrap/readiness wiring is not implemented. Static
+knowledge changes require administrator approval before trusted ingestion; reservation
+approval does not modify Chroma. Pending holds belong in private transactional SQL
+state and can change availability before approval, without confirming a booking.
 
 `.data/` and database sidecar files are git-ignored. Chroma anonymized telemetry is
 disabled. Metadata validation is **not** a PII detector or an authorization boundary:
@@ -244,8 +278,9 @@ async graph execution, thread isolation, sanitized errors, and the prompt contra
 Storage checks use temporary directories and offline deterministic embeddings to test
 Chroma/SQLite CRUD, new-process persistence, location/collection isolation, lazy
 initialization, input validation, concurrent workers, and transaction cleanup.
-Seed checks also cover the 30-record fixture, extensibility, dry-run behavior, invalid
-files/batches, repeatable ingestion, and preservation of unrelated documents.
+Inventory/seed checks also cover the eight-space fixture, strict fields/identity,
+minimal vehicle-agnostic fields, exact space lookup, old-schema exclusion, extensibility,
+dry-run behavior, invalid batches, repeatable ingestion, and unrelated-document preservation.
 They do not seed project data, make API calls, or evaluate live model behavior,
 semantic retrieval accuracy, or production security enforcement.
 

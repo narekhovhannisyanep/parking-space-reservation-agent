@@ -16,7 +16,7 @@ from langchain_core.embeddings import Embeddings
 from langchain_openai import AzureOpenAIEmbeddings
 from openai import APIError, OpenAIError
 
-from storage import StaticParkingStore, StorageConfig
+from storage import ParkingSpace, SpaceFilters, StaticParkingStore, StorageConfig
 from storage.static import _LazyAzureEmbeddings
 
 
@@ -27,15 +27,18 @@ class KeywordEmbeddings(Embeddings):
         return [self.embed_query(text) for text in texts]
 
     def embed_query(self, text):
-        return [float("entrance" in text.lower()), float("booking" in text.lower()), 0.1]
+        return [float("entrance" in text.lower()), float("lift" in text.lower()), 0.1]
 
 
-def document(identifier="entrance", text="The entrance is on Main Street.", location="north", topic="location"):
-    return Document(
-        id=identifier,
-        page_content=text,
-        metadata={"location_id": location, "source": "reviewed-parking-guide", "topic": topic},
-    )
+def document(identifier="entrance", text="Space beside the entrance.", location="north", **changes):
+    record = {
+        "space_id": identifier,
+        "location_id": location,
+        "label": identifier,
+        "description": text,
+        "source": "reviewed-space-inventory",
+    }
+    return ParkingSpace.from_record({**record, **changes}).to_document()
 
 
 class StaticStorageTests(unittest.TestCase):
@@ -61,27 +64,27 @@ class StaticStorageTests(unittest.TestCase):
         self.store.upsert_documents(
             [
                 document(),
-                document("booking", "Booking needs human approval.", topic="booking_process"),
-                document("south", "The entrance is on South Street.", location="south"),
+                document("lift", "Space beside the lift."),
+                document("south", "Space beside the entrance.", location="south"),
             ]
         )
         result = self.store.search("entrance", location_id="north", k=10)
         self.assertEqual(len(result), 2)
-        self.assertEqual(result[0].id, "entrance")
+        self.assertEqual(result[0].id, "north:space:entrance")
         self.assertTrue(all(doc.metadata["location_id"] == "north" for doc in result))
         self.assertEqual(self.store.search("entrance", location_id="unknown"), [])
 
     def test_upsert_is_idempotent_and_deletion_is_explicit(self):
         self.store.upsert_documents([document()])
         self.assertEqual(
-            self.store.upsert_documents([document(text="The entrance moved to East Street.")]), ["entrance"]
+            self.store.upsert_documents([document(text="Space beside the east entrance.")]), ["north:space:entrance"]
         )
         result = self.store.search("entrance", location_id="north")
         self.assertEqual(len(result), 1)
-        self.assertEqual(result[0].page_content, "The entrance moved to East Street.")
+        self.assertIn("Space beside the east entrance.", result[0].page_content)
         self.store.delete_documents([])
         self.assertEqual(len(self.store.search("entrance", location_id="north")), 1)
-        self.store.delete_documents(["entrance"])
+        self.store.delete_documents(["north:space:entrance"])
         self.assertEqual(self.store.search("entrance", location_id="north"), [])
 
     def test_data_survives_a_new_instance_and_process(self):
@@ -91,10 +94,10 @@ class StaticStorageTests(unittest.TestCase):
         code = (
             "import chromadb, json, sys; from chromadb.config import Settings; "
             "c = chromadb.PersistentClient(path=sys.argv[1], settings=Settings(anonymized_telemetry=False)); "
-            "print(json.dumps(c.get_collection('parking_static', embedding_function=None).get()['documents']))"
+            "print(json.dumps(c.get_collection(sys.argv[2], embedding_function=None).get()['documents']))"
         )
         result = subprocess.run(
-            [sys.executable, "-c", code, str(self.config.chroma_directory)],
+            [sys.executable, "-c", code, str(self.config.chroma_directory), self.config.chroma_collection],
             check=True,
             capture_output=True,
             text=True,
@@ -108,7 +111,26 @@ class StaticStorageTests(unittest.TestCase):
         self.assertEqual(other.search("entrance", location_id="north"), [])
 
     def test_invalid_documents_reject_the_whole_batch_before_creating_resources(self):
-        invalid = [document(identifier=" "), document(text=" "), document(topic="prices")]
+        invalid = []
+        for name, value in (
+            ("location_id", " "),
+            ("vehicle_type", "spaceship"),
+            ("accessible", "true"),
+            ("width_m", -1),
+            ("length_m", float("nan")),
+            ("max_height_m", True),
+            ("schema_version", True),
+            ("record_type", "booking_process"),
+        ):
+            bad = document()
+            bad.metadata[name] = value
+            invalid.append(bad)
+        wrong_id = document()
+        wrong_id.id = "north:space:different"
+        invalid.append(wrong_id)
+        blank_text = document()
+        blank_text.page_content = " "
+        invalid.append(blank_text)
         missing_id = document()
         missing_id.id = None
         invalid.append(missing_id)
@@ -118,13 +140,87 @@ class StaticStorageTests(unittest.TestCase):
         missing_source = document()
         del missing_source.metadata["source"]
         invalid.append(missing_source)
-        invalid.append(document(location=""))
         for doc in invalid:
             with self.subTest(doc=doc), self.assertRaises(ValueError):
                 self.store.upsert_documents([document("valid"), doc])
         with self.assertRaises(ValueError):
             self.store.upsert_documents([document(), document()])
         self.assertFalse(self.config.chroma_directory.exists())
+
+    def test_exact_space_filter_applies_before_ranking_and_preserves_location(self):
+        self.store.upsert_documents(
+            [
+                document(),
+                document("lift", "Space beside the lift."),
+                document("lift", location="south"),
+            ]
+        )
+        results = self.store.search("entrance", location_id="north", filters=SpaceFilters(space_id="lift"))
+        self.assertEqual([doc.id for doc in results], ["north:space:lift"])
+        self.assertIn("Space beside the lift.", results[0].page_content)
+        self.assertEqual(len(self.store.search("entrance", location_id="north", filters=SpaceFilters())), 2)
+
+    def test_no_matching_constraints_do_not_embed(self):
+        self.store.upsert_documents([document()])
+        with patch.object(self.store._embeddings, "embed_query", side_effect=AssertionError("must not embed")):
+            self.assertEqual(
+                self.store.search("lift", location_id="north", filters=SpaceFilters(space_id="missing")), []
+            )
+
+    def test_legacy_guide_records_are_never_retrieved_even_in_same_collection(self):
+        # Simulate old persisted content by bypassing the new trusted-ingestion validator.
+        self.store._get_store().add_documents(
+            [
+                Document(
+                    id="north:overview",
+                    page_content="The entrance is here.",
+                    metadata={"location_id": "north", "source": "old-guide", "topic": "general"},
+                )
+            ]
+        )
+        self.assertEqual(self.store.search("entrance", location_id="north"), [])
+        self.store.upsert_documents([document()])
+        self.assertEqual(
+            [doc.id for doc in self.store.search("entrance", location_id="north")], ["north:space:entrance"]
+        )
+
+    def test_arbitrary_filters_cannot_override_location_or_schema(self):
+        invalid_filters: Any = {"location_id": "south"}
+        with self.assertRaises(TypeError):
+            self.store.search("entrance", location_id="north", filters=invalid_filters)
+        self.assertFalse(self.config.chroma_directory.exists())
+
+    def test_obsolete_inventory_schema_is_not_retrieved_or_accepted(self):
+        legacy = document("legacy")
+        legacy.metadata.update(schema_version=1, vehicle_type="car", length_m=5.0)
+        self.store._get_store().add_documents([legacy])
+        with patch.object(self.store._embeddings, "embed_query", side_effect=AssertionError("must not embed")):
+            self.assertEqual(self.store.search("entrance", location_id="north"), [])
+        with self.assertRaises(ValueError):
+            self.store.upsert_documents([legacy])
+        self.store.upsert_documents([document()])
+        self.assertEqual(
+            [doc.id for doc in self.store.search("entrance", location_id="north")], ["north:space:entrance"]
+        )
+
+    def test_upsert_preserves_minimal_metadata_and_caller_document(self):
+        original = document()
+        expected = document()
+        self.store.upsert_documents([original])
+        self.assertEqual(original, expected)
+        result = self.store.search("semi or bicycle", location_id="north")[0]
+        self.assertEqual(result, expected)
+        ParkingSpace.validate_document(result)
+
+    def test_embedding_failure_does_not_remove_existing_space_or_metadata(self):
+        original = document()
+        self.store.upsert_documents([original])
+        with (
+            patch.object(self.store._embeddings, "embed_documents", side_effect=RuntimeError("offline")),
+            self.assertRaisesRegex(RuntimeError, "offline"),
+        ):
+            self.store.upsert_documents([document(text="Updated directions.")])
+        self.assertEqual(self.store.search("entrance", location_id="north"), [original])
 
     def test_invalid_queries_and_deletes_are_rejected(self):
         invalid: list[tuple[str, str, Any]] = [

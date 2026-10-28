@@ -1,4 +1,4 @@
-"""Persistent Chroma retrieval for trusted, public static parking documents only."""
+"""Persistent Chroma retrieval for trusted public parking-space inventory only."""
 
 from threading import Lock
 
@@ -11,6 +11,7 @@ from openai import APIError, OpenAIError
 from pydantic import ValidationError
 
 from storage.config import StorageConfig
+from storage.spaces import ParkingSpace, SpaceFilters
 
 
 class _LazyAzureEmbeddings(Embeddings):
@@ -53,7 +54,7 @@ class _LazyAzureEmbeddings(Embeddings):
 class StaticParkingStore:
     """Lazy, persistent vector store. Ingestion is a trusted Python API, not an LLM tool.
 
-    Only static-topic metadata is accepted. This is not a PII detector: callers must
+    Only validated space metadata is accepted. This is not a PII detector: callers must
     review document text and sources before ingestion. Never index chats/reservations.
     """
 
@@ -80,15 +81,8 @@ class StaticParkingStore:
         """Validate a complete batch without creating resources or calling embeddings."""
         ids: list[str] = []
         for document in documents:
-            if not document.id or not document.id.strip() or not document.page_content.strip():
-                raise ValueError("Static documents require a nonblank ID and text.")
-            metadata = document.metadata
-            if set(metadata) != {"location_id", "source", "topic"}:
-                raise ValueError("Static metadata must contain only location_id, source, and topic.")
-            if any(not isinstance(value, str) or not value.strip() for value in metadata.values()):
-                raise ValueError("Static metadata values must be nonblank strings.")
-            if metadata["topic"] not in ("general", "location", "booking_process"):
-                raise ValueError("Only general, location, and booking_process topics belong in static storage.")
+            ParkingSpace.validate_document(document)
+            assert document.id is not None
             ids.append(document.id)
         if len(set(ids)) != len(ids):
             raise ValueError("Document IDs must be unique within a batch.")
@@ -101,18 +95,23 @@ class StaticParkingStore:
             return []
         return self._get_store().add_documents(documents, ids=ids)
 
-    def search(self, query: str, *, location_id: str, k: int = 4) -> list[Document]:
-        """Search one explicit location; empty stores return no invented information."""
-        if not query.strip() or not location_id.strip():
-            raise ValueError("Query and location_id must not be blank.")
+    def search(
+        self, query: str, *, location_id: str, k: int = 4, filters: SpaceFilters | None = None
+    ) -> list[Document]:
+        """Filter exact space constraints, then rank; this does NOT check availability."""
+        if not isinstance(query, str) or not query.strip():
+            raise ValueError("Query must be nonblank text.")
         if type(k) is not int or k < 1:
             raise ValueError("k must be a positive integer.")
+        if filters is not None and not isinstance(filters, SpaceFilters):
+            raise TypeError("filters must be validated SpaceFilters, not an arbitrary metadata query.")
+        where = (filters if filters is not None else SpaceFilters()).where(location_id)
         store = self._get_store()
         # Avoid embedding calls on unseeded stores and clamp k to available documents.
-        available = store.get(where={"location_id": location_id}, limit=k, include=[])["ids"]
+        available = store.get(where=where, limit=k, include=[])["ids"]
         if not available:
             return []
-        return store.similarity_search(query, k=len(available), filter={"location_id": location_id})
+        return store.similarity_search(query, k=len(available), filter=where)
 
     def delete_documents(self, ids: list[str]) -> None:
         """Delete explicit IDs only; an empty list must never clear a collection."""

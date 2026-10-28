@@ -27,12 +27,21 @@
   `AgentConfig.storage`/`StorageConfig`. Embeddings/stores can be injected. Databases initialize
   on first storage operation, not chat/import; embedding clients initialize on actual embedding.
   The graph does not call storage yet. Paths default to project-root `.data/` (git-ignored).
-- `storage/static_examples.json` has 30 example static records for the single
-  fictional `demo-central` location (10 general, 9 location, 11 booking-process scenarios).
-  `python -m storage.seed` explicitly validates/upserts stable IDs; `--dry-run` is offline,
-  `--file` permits reviewed larger datasets. No automatic seeding or `.env` loading;
-  use `uv run --env-file .env python -m storage.seed` for configured embeddings.
-  Demo booking states are workflow guidance, not reservations or implemented enforcement.
+- `storage/parking_spaces.json` replaces the incorrect guide corpus with eight mock
+  individually identified spaces for `demo-central`. `ParkingSpace`/`SpaceFilters` in
+  `storage/spaces.py` validate static inventory and allowlisted exact metadata constraints
+  before semantic ranking. Documents use `{location_id}:space:{space_id}` IDs and
+   generated descriptions. Fields are only space_id/location_id/label/description/source;
+   filters support only exact space_id plus mandatory location/type/schema scope.
+   Every space fits any vehicle by project assumption; no fit/category/feature modeling.
+   The default collection is `parking_spaces_v2` with schema version 2; existing `.env`/
+   databases are unchanged. Re-seed into the new collection; do not overwrite old-schema
+   IDs in old collections (Chroma merges metadata). Queries exclude old schema/guide records.
+- `python -m storage.seed` validates/upserts reviewed structured spaces; `--dry-run` is
+  offline, `--file` supports reviewed inventories. No automatic seeding or `.env` loading;
+  use `uv run --env-file .env python -m storage.seed`. Updates do not delete omitted IDs
+   or enforce approval. `PARKING_DATA_MODEL.md` defines the minimal fields and future
+   booking responsibilities; reservation storage/services are not implemented.
 
 ## Persistent project context
 - Keep project requirements, accepted decisions with rationale, current status, and
@@ -46,12 +55,12 @@
 - Use the requirements below as the baseline; ask only about unresolved or new choices.
 
 ### Outstanding design work
-- Before defining reservation/allocation schemas, resolve single versus multiple parking
-  locations and interchangeable capacity versus individually bookable spaces. Current stores
-  require explicit location IDs without selecting topology. Real sources and dynamic seeding are deferred.
-- Chroma was selected for a local, serverless persistent static index; SQLite for dynamic facts
-  without another dependency. Static LangChain documents require stable IDs and exactly
-  `location_id`, `source`, `topic` metadata; topics are general/location/booking_process.
+- The four project stages are the main and only current goal.
+- Treat the required car_number as a user-provided vehicle identifier, including for
+  vehicles without plates. Do not require vehicle type, measurements, or plate format.
+- Chroma was selected for a local, serverless persistent static space index; SQLite for dynamic facts
+  without another dependency. Static LangChain documents use validated inventory metadata
+  and generated descriptions.
   SQLite stores working_hours/prices/availability as JSON snapshots keyed by location/kind,
   with UTC write timestamps and per-operation transactional connections. This is not a
   reservation ledger or availability enforcement. Domain schemas and refresh rules remain open.
@@ -61,8 +70,17 @@
 - Trusted Python ingestion only: no LLM write tools, chat ingestion, or personal reservation data
   in either public-fact store. Metadata validation/filtering is not PII detection or authorization.
   Graph retrieval/tool wiring, guardrails, access controls, safe logging, and evaluation remain open.
+- Retrieval must be controlled deterministically by Python/LangGraph code and use Chroma
+  for static evidence, not depend on an LLM choosing to call a retrieval tool. Each turn supplies
+  relevant records/fields as current model context; dynamic operational facts supplement static
+  evidence, not write reservation data into Chroma. Query construction and context budgets remain open.
+- Separate storage initialization, reviewed seeding/ingestion, readiness validation, and refresh.
+  Bootstrap/startup wiring remains open. The user wants static updates gated by administrator
+  approval; clarify knowledge-change approval versus reservation approval before implementing writes.
 - Availability may change while administrator approval is pending. Decide whether to
-  hold capacity or recheck availability before committing a reservation.
+  hold capacity or recheck availability before committing a reservation. The user is considering
+  pending-request holds to avoid offering the same capacity twice; hold expiry/release rules and
+  an authoritative reservation ledger remain undefined, not implemented by public JSON snapshots.
 - Human-approval workflows can replay operations when resumed; notifications and
   recording should resist duplicates. Detailed orchestration remains undecided.
 

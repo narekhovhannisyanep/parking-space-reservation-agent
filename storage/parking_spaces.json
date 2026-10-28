@@ -1,0 +1,34 @@
+[
+  {
+    "space_id": "G-A01", "location_id": "demo-central", "label": "A01",
+    "description": "Beside the east-side vehicle entrance.", "source": "mock-space-inventory-v2"
+  },
+  {
+    "space_id": "G-A02", "location_id": "demo-central", "label": "A02",
+    "description": "Beside the pedestrian lobby.", "source": "mock-space-inventory-v2"
+  },
+  {
+    "space_id": "G-E01", "location_id": "demo-central", "label": "E01",
+    "description": "Along the north wall.", "source": "mock-space-inventory-v2"
+  },
+  {
+    "space_id": "G-E02", "location_id": "demo-central", "label": "E02",
+    "description": "Near the lift.", "source": "mock-space-inventory-v2"
+  },
+  {
+    "space_id": "L1-B01", "location_id": "demo-central", "label": "B01",
+    "description": "On the first level beside the stairwell.", "source": "mock-space-inventory-v2"
+  },
+  {
+    "space_id": "G-M01", "location_id": "demo-central", "label": "M01",
+    "description": "Along the south wall.", "source": "mock-space-inventory-v2"
+  },
+  {
+    "space_id": "OUT-V01", "location_id": "demo-central", "label": "V01",
+    "description": "In the outdoor area beside the gate.", "source": "mock-space-inventory-v2"
+  },
+  {
+    "space_id": "OUT-C01", "location_id": "demo-central", "label": "C01",
+    "description": "In the outdoor area beside the west fence.", "source": "mock-space-inventory-v2"
+  }
+]

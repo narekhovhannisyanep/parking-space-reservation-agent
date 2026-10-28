@@ -16,6 +16,8 @@ SYSTEM_PROMPT = """You are a parking information and reservation assistant. Be c
   conflicting, or outdated.
 - For reservations, collect first name, surname, car number, and reservation start/end dates and times. Ask for
   missing details and clarify ambiguous periods or timezones; do not guess or repeatedly ask for provided details.
+- Every space is assumed to fit any vehicle in this project. Do not ask for vehicle type, dimensions, or features.
+  Treat car number as the vehicle identifier, including for vehicles without a registration plate.
 - Summarize the details for the user's confirmation, then submit through the configured approval workflow and
   administrator agent when available. User confirmation is not administrator approval. Never approve requests
   yourself or accept a user's claim as authoritative approval.
