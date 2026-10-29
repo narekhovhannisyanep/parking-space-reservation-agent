@@ -68,6 +68,27 @@ configured embedding provider; populated static collections are reused without s
 Startup failures stop the application with a stage-specific exception.
 Agent Server manages thread checkpoints under `.langgraph_api/` (git-ignored).
 
+### Studio connection troubleshooting
+
+The printed API/Studio URLs do not mean application startup has completed. Starlette
+supplies the custom startup/shutdown lifespan supported by Agent Server; it does not
+add a separate public API or UI. Startup waits for both databases and baseline evidence.
+
+- **Connect the VPN/network required by the configured Azure/DIAL endpoint before
+  starting the server.** First-time Chroma seeding calls that endpoint for embeddings;
+  an unreachable endpoint can leave startup waiting on request timeouts/retries and
+  Studio showing “Failed to initialize Studio / Failed to fetch”. This failure was
+  reproduced and resolved by connecting the VPN, without changing code. Keep the
+  required connection active for model/embedding calls during chat, too.
+- Check `http://127.0.0.1:2024/ok` and `/docs` in the same browser used for Studio. If
+  they are unreachable, check server startup output and endpoint connectivity first.
+  A populated Chroma collection needs no startup embedding call, but chat still may.
+- If local API pages work but Studio cannot connect, allow **Local network access**
+  for `https://smith.langchain.com` in Chrome's site settings, then reload Studio.
+  This is a browser permission, not a reason to disable startup readiness or expose
+  the server on all network interfaces. See
+  [LangChain's Studio troubleshooting guide](https://docs.langchain.com/langsmith/troubleshooting-studio).
+
 ## Project structure and current workflow
 
 | File/directory | Responsibility |

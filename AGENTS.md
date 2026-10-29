@@ -21,6 +21,9 @@
   relevant behavior and your recommendation so the user can make an informed decision.
   Exercise judgment on routine implementation details within agreed scope, but do not
   interpret trust in that judgment as permission to make unagreed product decisions.
+- **New dependencies:** before adding a third-party package, explain what problem it
+  solves, why it is needed, and relevant alternatives or trade-offs, then obtain the
+  user's approval. Approval of a behavior does not automatically approve a new package.
 - The database-startup/availability-suggestions implementation is deliberately limited
   to preparation and options. Reservation holds, administrator decisions, and recording
   are subsequent work; discuss their remaining choices before implementing them.
@@ -126,6 +129,11 @@ as code are extra-credit artifacts; see the baseline for details.
   storage/evidence before requests, while model clients remain lazy. Module exports
   `app:agent` and `app:webapp` share one agent. The exported graph rejects unprepared runs.
   Models, embeddings, stores, and checkpointers can be injected for offline tests.
+- Starlette supplies the custom server lifespan, not a separate public API/UI. With the
+  current endpoint, VPN connectivity is needed for embedding/model requests. Mandatory
+  first-time seeding waits on embeddings before serving Studio; a printed CLI URL is
+  not proof of readiness. Studio connectivity was restored by connecting the VPN,
+  without a code or provider change; this does not establish live-model accuracy.
 - Current graph: `START → reservation_collection`; information turns continue through
   `context_augmentation → parking_assitant → END`. Deterministic collection replies
   go directly to `parking_assitant → END` without retrieval, except incomplete request
@@ -166,6 +174,32 @@ as code are extra-credit artifacts; see the baseline for details.
 - All four stages remain incomplete. Submission, administrator communication/decision
   handling, allocation, MCP/file recording, and the complete pipeline are not implemented.
 
+## Next-session handoff
+
+- **Where we stopped:** database startup preparation, bounded semantic availability
+  suggestions, and reservation draft collection are implemented. Studio is working
+  after connecting the required VPN; `/ok`, `/info`, and assistant discovery returned
+  HTTP 200. No code/provider change was needed for that connection issue. Do not redo
+  the startup implementation or treat Studio connectivity as live-model evaluation.
+- **First action:** review the current implementation and remaining work below with
+  the user, then agree on the next implementation slice. No next slice or new workflow
+  details were selected in this session. Completing Stage 1 coverage, privacy guards,
+  and evaluation is an available next step, not a newly imposed implementation order.
+- **Before the reservation/administrator slice:** settle space selection/submission
+  timing, period-overlap eligibility, refusal handling, on-demand validation/cleanup,
+  and administrator communication channel. Then implement the agreed SQLite hold
+  before review and connect the second agent's human decision to Python-controlled
+  state changes. Suggestions must remain non-holding; user confirmation is not approval.
+- **Before the recording slice:** settle MCP implementation (or documented permitted
+  fallback), file layout, retries, and access protection. Then implement approved-only
+  recording and dedicated output-directory startup cleanup, preserving SQLite approval
+  and allocation if writing fails. These behaviors are agreed; their detailed wiring
+  is not. Finish full integration and end-to-end/load testing after connecting the flow.
+- Preserve the existing offline startup, storage, retrieval, and draft tests. Obtain
+  approval before adding any dependency, and keep setup/status documentation aligned
+  with each implemented slice. Inspect actual git status rather than assuming changes
+  from a prior session are still uncommitted; do not stage or commit without instruction.
+
 ## Remaining decisions and work
 
 - Complete Stage 1 information coverage, required guardrails, and evaluation.
@@ -191,5 +225,8 @@ as code are extra-credit artifacts; see the baseline for details.
 - Keep PROJECT_REQUIREMENTS.md unchanged when documenting implementation choices.
   Record a user-approved scope change separately and explicitly.
 - CLAUDE.md imports @AGENTS.md; do not duplicate project context there.
+- The user intentionally removed `.github/instructions/memory.instruction.md`.
+  Keep persistent project/collaboration instructions in `AGENTS.md`; do not recreate
+  a separate memory instruction file.
 - Setup, commands, and behavior: README.md. Implemented data fields: PARKING_DATA_MODEL.md.
   Code style: pyproject.toml. Retain the MIT LICENSE and existing copyright notices.
