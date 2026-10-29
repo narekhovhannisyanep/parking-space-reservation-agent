@@ -3,6 +3,7 @@
 import asyncio
 import json
 import os
+import sqlite3
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -10,6 +11,8 @@ from threading import Lock
 from typing import Annotated, Literal
 from uuid import uuid4
 
+from chromadb.errors import ChromaError
+from langchain_core.documents import Document
 from langchain_core.embeddings import Embeddings
 from langchain_core.exceptions import OutputParserException
 from langchain_core.language_models.chat_models import BaseChatModel
@@ -24,7 +27,16 @@ from openai import APIError, OpenAIError
 from pydantic import ValidationError
 
 from commons.constants import DIAL_GPT_LUNA_6, SYSTEM_PROMPT
-from context_augmentation import ContextConfig, augmented_messages, latest_user_index, retrieve_context
+from context_augmentation import (
+    CONTEXT_HEADER,
+    ContextConfig,
+    asks_availability,
+    augmented_messages,
+    latest_user_index,
+    offered_space_ids,
+    render_context,
+    retrieve_context,
+)
 from reservation_collection import (
     EXTRACTION_FAILURE,
     ReservationExtraction,
@@ -55,6 +67,7 @@ class ParkingState(ParkingMessages):
     retrieval_context: str = ""
     reservation: dict = field(default_factory=dict)
     reservation_reply: str = ""
+    offered_space_ids: list[str] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -111,17 +124,66 @@ class ParkingSpaceReservationAgent:
         dynamic_store: DynamicParkingStore | None = None,
         reservation_extractor: Runnable | None = None,
         clock: Callable[[], datetime] | None = None,
+        require_startup: bool = False,
     ) -> None:
         self.config = config if config is not None else AgentConfig.from_environment()
         self._llm_client = llm_client
         self._reservation_extractor = reservation_extractor
         self._clock = clock if clock is not None else lambda: datetime.now(UTC)
         self._initialization_lock = Lock()
+        self._startup_lock = Lock()
+        self._startup_required = require_startup
+        self.startup_ready = False
+        self.baseline_context = ""
+        self._baseline_documents: list[Document] | None = None
         self.static_store = (
             static_store if static_store is not None else StaticParkingStore(self.config.storage, embeddings=embeddings)
         )
         self.dynamic_store = dynamic_store if dynamic_store is not None else DynamicParkingStore(self.config.storage)
         self.graph = self._build_graph(checkpointer)
+
+    def prepare_startup(self) -> None:
+        """Prepare shared stores/evidence once per server lifespan, before any chat."""
+        with self._startup_lock:
+            if self.startup_ready:
+                return
+            stage = "static database initialization/seeding"
+            try:
+                self.static_store.initialize()
+                stage = "dynamic database reset"
+                self.dynamic_store.reset()
+                stage = "baseline context retrieval"
+                ids = self.static_store.list_space_ids(self.config.context.location_id)
+                if not ids:
+                    raise ValueError("No inventory exists for the configured location.")
+                documents = self.static_store.get_spaces(
+                    ids[: min(3, self.config.context.retrieval_k)], location_id=self.config.context.location_id
+                )
+                facts = self.dynamic_store.list_facts(self.config.context.location_id)
+                context = render_context(documents, facts, self.config.context)
+                if not json.loads(context.removeprefix(CONTEXT_HEADER))["static_spaces"]:
+                    raise ValueError("No baseline evidence fits the configured context budget.")
+            except (OSError, ValueError, RuntimeError, sqlite3.Error, ChromaError, OpenAIError):
+                # Startup is an all-or-fail boundary for storage/provider failures.
+                # Do not expose raw provider exceptions, paths, or credentials.
+                raise RuntimeError(
+                    f"Parking startup failed during {stage}. Check storage paths, embedding configuration, "
+                    "seed data, and PARKING_LOCATION_ID before restarting."
+                ) from None
+            self._baseline_documents = documents
+            self.baseline_context = context
+            self.startup_ready = True
+
+    def finish_shutdown(self) -> None:
+        """Invalidate readiness so another lifespan resets SQLite again, not Chroma."""
+        with self._startup_lock:
+            self.startup_ready = False
+            self.baseline_context = ""
+            self._baseline_documents = None
+
+    def _check_startup(self) -> None:
+        if self._startup_required and not self.startup_ready:
+            raise RuntimeError("Parking databases are not ready. Complete server startup before accepting messages.")
 
     def _get_llm_client(self) -> BaseChatModel:
         # Import/graph construction stays offline; concurrent first runs share one client.
@@ -183,9 +245,17 @@ class ParkingSpaceReservationAgent:
         session, reply = advance_collection(
             previous, text, proposal, self.config.context.location_id, self._clock(), state.messages
         )
-        return {"reservation": session.model_dump(mode="json"), "reservation_reply": reply, "retrieval_context": ""}
+        updates: dict = {
+            "reservation": session.model_dump(mode="json"),
+            "reservation_reply": reply,
+            "retrieval_context": "",
+        }
+        if text.strip() in {"/cancel", "/new"}:
+            updates["offered_space_ids"] = []
+        return updates
 
     def _reservation_collection(self, state: ParkingState, config: RunnableConfig) -> dict:
+        self._check_startup()
         text = self._collection_input(state)
         if not text.strip():
             return {"reservation_reply": ""}
@@ -199,6 +269,7 @@ class ParkingSpaceReservationAgent:
         return self._collection_result(state, text, result)
 
     async def _areservation_collection(self, state: ParkingState, config: RunnableConfig) -> dict:
+        self._check_startup()
         text = self._collection_input(state)
         if not text.strip():
             return {"reservation_reply": ""}
@@ -212,10 +283,25 @@ class ParkingSpaceReservationAgent:
         return self._collection_result(state, text, result)
 
     def _route_collection(self, state: ParkingState) -> Literal["context_augmentation", "parking_assitant"]:
+        if (
+            state.reservation_reply
+            and state.reservation_reply != EXTRACTION_FAILURE
+            and self._reservation_session(state).status == "collecting"
+            and asks_availability(state.messages, self.config.context)
+        ):
+            return "context_augmentation"
         return "parking_assitant" if state.reservation_reply else "context_augmentation"
 
     def _collection_response(self, state: ParkingState) -> dict:
-        response = AIMessage(state.reservation_reply, id=str(uuid4()))
+        reply = state.reservation_reply
+        options = offered_space_ids(state.retrieval_context)
+        if options is not None:
+            reply += "\n\n" + (
+                "Current parking options: " + ", ".join(options) + ". These are suggestions, not holds or bookings."
+                if options
+                else "No eligible parking options can currently be offered."
+            )
+        response = AIMessage(reply, id=str(uuid4()))
         updates: dict = {"messages": [response]}
         session = self._reservation_session(state)
         if session.status == "awaiting_confirmation":
@@ -224,14 +310,21 @@ class ParkingSpaceReservationAgent:
             ).model_dump(mode="json")
         return updates
 
-    def _context_augmentation(self, state: ParkingState) -> dict[str, str]:
-        return {
-            "retrieval_context": retrieve_context(
-                state.messages, self.static_store, self.dynamic_store, self.config.context
-            )
-        }
+    def _context_augmentation(self, state: ParkingState) -> dict:
+        context = retrieve_context(
+            state.messages,
+            self.static_store,
+            self.dynamic_store,
+            self.config.context,
+            baseline_documents=self._baseline_documents,
+        )
+        updates: dict = {"retrieval_context": context}
+        options = offered_space_ids(context)
+        if options is not None:
+            updates["offered_space_ids"] = options
+        return updates
 
-    async def _acontext_augmentation(self, state: ParkingState) -> dict[str, str]:
+    async def _acontext_augmentation(self, state: ParkingState) -> dict:
         # Chroma, embeddings, and SQLite are synchronous; keep them off the server event loop.
         return await asyncio.to_thread(self._context_augmentation, state)
 

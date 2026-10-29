@@ -36,6 +36,8 @@ class LiveReservationModelTests(unittest.TestCase):
             self.skipTest("Disable model tracing for these smoke checks.")
         static = Mock(spec=StaticParkingStore)
         static.search.return_value = []
+        static.list_space_ids.return_value = []
+        static.get_spaces.return_value = []
         dynamic = Mock(spec=DynamicParkingStore)
         dynamic.list_facts.return_value = []
         self.agent = ParkingSpaceReservationAgent(

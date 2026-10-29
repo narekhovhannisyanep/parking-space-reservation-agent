@@ -167,6 +167,40 @@ class StaticStorageTests(unittest.TestCase):
                 self.store.search("lift", location_id="north", filters=SpaceFilters(space_id="missing")), []
             )
 
+    def test_eligible_document_filter_applies_before_ranking_and_preserves_scope(self):
+        self.store.upsert_documents(
+            [document(), document("lift", "Space beside the lift."), document("lift", location="south")]
+        )
+        legacy = document("legacy", "Space beside the entrance.")
+        legacy.metadata["schema_version"] = 1
+        self.store._get_store().add_documents([legacy])
+        result = self.store.search(
+            "entrance", location_id="north", k=3, eligible_ids=["north:space:lift", "north:space:legacy"]
+        )
+        self.assertEqual([doc.id for doc in result], ["north:space:lift"])
+        self.assertEqual(
+            self.store.search(
+                "entrance",
+                location_id="north",
+                filters=SpaceFilters(space_id="entrance"),
+                eligible_ids=["north:space:lift"],
+            ),
+            [],
+        )
+
+    def test_empty_or_nonmatching_eligibility_does_not_embed(self):
+        self.assertEqual(self.store.search("lift", location_id="north", eligible_ids=[]), [])
+        self.assertFalse(self.config.chroma_directory.exists())
+        self.store.upsert_documents([document()])
+        with patch.object(self.store._embeddings, "embed_query", side_effect=AssertionError("must not embed")):
+            self.assertEqual(self.store.search("lift", location_id="north", eligible_ids=["north:space:missing"]), [])
+
+    def test_invalid_eligibility_cannot_broaden_scope_or_initialize_storage(self):
+        for ids in (["south:space:lift"], ["north:overview"], ["north:space:../bad"], ["north:space:lift"] * 2):
+            with self.subTest(ids=ids), self.assertRaises(ValueError):
+                self.store.search("lift", location_id="north", eligible_ids=ids)
+        self.assertFalse(self.config.chroma_directory.exists())
+
     def test_legacy_guide_records_are_never_retrieved_even_in_same_collection(self):
         # Simulate old persisted content by bypassing the new trusted-ingestion validator.
         self.store._get_store().add_documents(

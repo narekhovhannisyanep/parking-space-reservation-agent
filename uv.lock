@@ -3029,6 +3029,7 @@ dependencies = [
     { name = "langsmith" },
     { name = "notebook" },
     { name = "python-dotenv" },
+    { name = "starlette" },
 ]
 
 [package.dev-dependencies]
@@ -3047,6 +3048,7 @@ requires-dist = [
     { name = "langsmith", specifier = ">=0.14.11" },
     { name = "notebook", specifier = ">=7.6.3" },
     { name = "python-dotenv", specifier = ">=1.2.4" },
+    { name = "starlette", specifier = ">=1.10.0" },
 ]
 
 [package.metadata.requires-dev]

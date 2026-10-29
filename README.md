@@ -18,7 +18,7 @@ reliability, evaluation, and testing remain part of the assignment.
 
 | Stage | Implemented | Still needed |
 | --- | --- | --- |
-| 1: RAG/chatbot | Persistent Chroma/SQLite stores, graph-wired retrieval, draft collection/validation/user confirmation | Complete parking-information data, required guardrails/filtering, live accuracy checks, performance evaluation/report |
+| 1: RAG/chatbot | Startup-ready Chroma/SQLite stores, graph-wired retrieval, three semantic eligibility-filtered options, draft collection/validation/user confirmation | Complete parking-information data, required guardrails/filtering, live accuracy checks, performance evaluation/report |
 | 2: Human approval | Two-agent approach selected | Administrator agent, communication channel, request escalation, approval/refusal handling |
 | 3: Approved recording | File format and Python-owned recording responsibility selected | MCP service (or permitted fallback), access protection, approved-only file writes |
 | 4: Orchestration | Conversation graph and offline integration tests | Complete approval/recording pipeline, end-to-end/load tests, completed usage/deployment documentation |
@@ -60,14 +60,19 @@ Local API docs: `http://127.0.0.1:2024/docs`. Stop the server with Ctrl+C.
 an additional public UI is not part of the current scope.
 
 The CLI loads `.env` through `langgraph.json`. Application imports do not load it,
-initialize clients/databases, or make API calls. Clients and stores initialize lazily.
+initialize clients/databases, or make API calls. The configured Starlette lifespan
+prepares databases and bounded baseline evidence **before the server accepts requests**.
+The graph and HTTP app use module exports (`app:agent`, `app:webapp`) to share one agent
+instance. Chat/extraction models remain lazy. First-time static seeding calls the
+configured embedding provider; populated static collections are reused without seeding.
+Startup failures stop the application with a stage-specific exception.
 Agent Server manages thread checkpoints under `.langgraph_api/` (git-ignored).
 
 ## Project structure and current workflow
 
 | File/directory | Responsibility |
 | --- | --- |
-| `app.py`, `langgraph.json` | CLI graph export/configuration |
+| `app.py`, `langgraph.json` | Shared CLI graph export and server-startup lifespan/configuration |
 | `parking_agent.py` | Agent-owned configuration/resources and deterministic graph construction |
 | `commons/constants.py` | Current model constants and user-facing system prompt |
 | `context_augmentation.py` | Public-information retrieval and model-only evidence augmentation |
@@ -80,6 +85,7 @@ Current graph:
 ```text
 START → reservation_collection
   information turn → context_augmentation → parking_assitant → END
+  incomplete request mentioning availability/reservation → context_augmentation → parking_assitant → END
   collection reply → parking_assitant → END
 ```
 
@@ -92,6 +98,11 @@ The agent owns shared resources, while conversation/request state belongs to gra
 threads. Tests can inject models, extractors, clocks, embeddings, stores, and a
 checkpointer. Direct callers outside Agent Server need a checkpointer for multi-turn
 draft state; the public messages alone do not reconstruct it.
+For standalone startup-ready use, construct with `require_startup=True`, call
+`prepare_startup()` before graph invocation, and `finish_shutdown()` at shutdown.
+The exported server graph always requires preparation; low-level standalone/offline
+tests may leave `require_startup=False` to exercise individual components without
+server-startup side effects.
 
 ## Persistent parking information
 
@@ -99,17 +110,34 @@ The selected static/dynamic split is an optional assignment improvement we are
 keeping: local persistent Chroma for static information, built-in SQLite for hours,
 prices, and availability. Neither requires a separate database server.
 
-Both databases initialize on first storage use, not server startup. Information
-turns may create empty databases but never seed them. Deterministic collection
-replies skip storage. Personal reservation details and chats are not ingested into
-either public-information store.
+At each application-server startup:
+
+1. Open the configured Chroma collection and **immediately seed** the bundled fixture
+   if the collection is missing or empty. Reuse populated collections unchanged;
+   do not compare timestamps, fixture contents, or freshness.
+2. Recreate the configured SQLite file and schema empty, removing its old SQLite
+   sidecars as well. This intentionally discards all dynamic facts from previous runs.
+3. Read up to three scoped static records and initial dynamic facts, validate them,
+   and prepare bounded baseline JSON evidence before accepting interaction. A missing
+   configured location or unusable baseline is a startup error.
+
+Preparation is idempotent within one server lifespan. New threads/graph invocations
+do not reset SQLite or seed Chroma. The next server lifespan resets SQLite again.
+**Do not share this disposable SQLite file between concurrently running servers.**
+SQLite must be outside the persistent Chroma directory to prevent destructive path
+overlap. The reset deletes only the configured database/sidecars, never their parent.
+Personal reservation details and chats are not ingested into either public-information
+store. Recording-directory cleanup is agreed for Stage 3, not implemented here.
 
 ### Static inventory and seeding
 
-`StaticParkingStore` exposes `upsert_documents`, `search`, and `delete_documents`.
+`StaticParkingStore` exposes startup `initialize`, scoped `list_space_ids`/`get_spaces`,
+and the existing `upsert_documents`, `search`, and `delete_documents` APIs.
 `ParkingSpace` validates individual inventory records and generates LangChain
 documents. `SpaceFilters` supports exact space-ID filtering within mandatory
 location/type/schema scope before semantic ranking.
+The internal `search(..., eligible_ids=...)` constraint also limits ranking to the
+document IDs Python has deemed eligible; it never changes that mandatory scope.
 
 `storage/parking_spaces.json` contains eight mock spaces for `demo-central`, differing
 by identity and public directions. Every space fits any vehicle by project assumption;
@@ -122,7 +150,8 @@ Validate the fixture offline:
 .venv/bin/python -m storage.seed --dry-run
 ```
 
-Explicitly load `.env` and embed/upsert the spaces:
+Startup seeds automatically when needed. For an explicit operator-controlled upsert,
+load `.env` and embed/upsert the spaces:
 
 ```bash
 uv run --env-file .env python -m storage.seed
@@ -136,9 +165,9 @@ uv run --env-file .env python -m storage.seed --file path/to/reviewed-spaces.jso
 ```
 
 Repeated upserts update the same IDs; unrelated IDs are preserved. Omitted records
-are not deleted automatically. SQLite is untouched. Static-data changes require
-administrator approval as an accepted user addition, separate from reservation
-approval; the current seed CLI does not enforce it.
+are not deleted automatically. SQLite is untouched. The agreed demo uses the bundled
+mock fixture without implementing static-data-change or approval logic. The explicit
+seed CLI remains an operator API; startup never updates a populated collection.
 
 **Existing database compatibility:** the current schema is version 2 and the default
 collection is `parking_spaces_v2`. If `.env` selects an older collection, select a
@@ -155,8 +184,14 @@ Allowed kinds are `working_hours`, `prices`, and `availability`, keyed by locati
 and kind with JSON values and UTC write timestamps. Writes are transactional and
 parameter-bound; connections are closed per operation.
 
-Dynamic data is unseeded. Missing facts return `None` or an empty list, not invented
-defaults. Payloads are JSON-compatible but have no domain-specific schemas yet.
+Dynamic data starts empty at each server startup. Missing facts return `None` or an
+empty list; hours and prices remain unknown until supplied through Python CRUD.
+For availability suggestions, the static inventory is available by default unless a
+successfully read dynamic snapshot blocks it. The current lightweight availability
+snapshot supports a location-wide boolean or a map of space IDs to booleans:
+`False` blocks a space; omitted IDs use the static default. Null, aggregate counts,
+strings, and unsupported shapes cannot be used to select options and raise an error.
+Hours/prices retain their existing JSON-compatible payloads.
 These are public observations, not a reservation ledger, capacity holds, or
 availability checks for a requested period. A write timestamp does not prove freshness.
 
@@ -164,15 +199,33 @@ availability checks for a requested period. A write timestamp does not prove fre
 
 For information turns, code builds queries from fixed English public-topic terms
 (entrance, lift, location/directions, hours, prices, availability), never raw user
-text or draft values. Unknown topics use `parking information`. It retrieves static
-spaces and reads dynamic facts within the configured location.
+text or draft values. Unknown topics use `parking information` and reuse the bounded
+startup static evidence. Location/directions topics still use semantic retrieval.
+Hours/prices-only turns include only the requested operational facts, not space
+inventory or unrelated availability snapshots. Dynamic facts
+are reread on information turns, not taken from a permanently cached startup snapshot.
+
+For availability/request topics, Python reads scoped inventory IDs, applies current
+dynamic overrides, and uses the message-derived public-topic query for **embedding-based
+similarity search over eligible spaces**. Chroma returns **up to three** records using
+its native `k` limit. There is no random sampling of the whole inventory and no need
+to implement extra space features: existing public descriptions provide searchable text.
+For example, “Any available spaces near the elevator?” embeds `lift availability`,
+not the full message or personal reservation details. Eligibility is applied before
+ranking so blocked spaces do not displace eligible results. A failed read is never
+an empty database. Retrieved records appear as `availability_options`, distinct from
+ordinary static directions evidence. Offered IDs are retained in thread state, not
+public graph input/output, and do not write or hold any space. Initial incomplete
+reservation requests can display options alongside deterministic collection replies;
+confirmation summaries and control commands retain their existing behavior.
 
 JSON evidence is appended only to a copy of the latest user message for the model.
 Dynamic snapshots have evidence-budget priority and are the instructed source for
-operational facts. Missing/null/omitted values mean unknown. Top-K retrieval is not
+operational facts. Missing/null/omitted hours/prices mean unknown; availability uses
+the explicit code-controlled default/override rule above. Top-K retrieval is not
 exhaustive inventory or allocation. Async storage runs off the event loop.
 
-Current defaults: location `demo-central`, K=4, inspected user text=2,000 characters,
+Current defaults: location `demo-central`, K=3, inspected user text=2,000 characters,
 evidence=12,000 characters. `ContextConfig` holds these settings. Fixed queries narrow
 free-form retrieval; follow-up rewriting and user-text exact-ID extraction are not
 implemented. Model instructions are not enforced output grounding or complete privacy guards.
@@ -267,7 +320,9 @@ live tests are skipped unless explicitly enabled):
 ```
 
 Coverage includes Chroma/SQLite CRUD and persistence, validation/isolation/concurrency,
-graph context refresh/budgets/message preservation, sync/async execution, and draft
+startup seeding/static reuse, SQLite reset/failure propagation, real Starlette lifespan,
+eligibility-constrained semantic ranking/query privacy/thread isolation, context refresh/budgets/message preservation,
+sync/async execution, and draft
 collection/confirmation/timezone handling. It does not establish live model accuracy,
 complete privacy enforcement, or completion of the assignment's evaluation/load tests.
 
@@ -283,12 +338,14 @@ uv tool run ruff format --check app.py parking_agent.py reservation_collection.p
 
 Finish the four stages using the retained choices in AGENTS.md. Decide administrator
 channel, MCP implementation/output location, and the simple allocation/approval flow
-when working on those steps. Pending holds were discussed, not selected. Do not build
-hold-management, scaling, or production infrastructure speculatively.
+when working on those steps. Pending request holds are selected for the later flow;
+timing, overlap rules, refusal handling, and on-demand validation/cleanup still need
+agreement. Do not build expiry timers, scaling, or production infrastructure speculatively.
 
 ## References
 
 - [LangGraph local server](https://docs.langchain.com/langsmith/local-server)
+- [Server startup lifespan](https://docs.langchain.com/langsmith/custom-lifespan)
 - [Studio setup](https://docs.langchain.com/langsmith/quick-start-studio)
 - [LangGraph persistence](https://docs.langchain.com/oss/python/langgraph/persistence)
 - [LangChain Chroma integration](https://docs.langchain.com/oss/python/integrations/vectorstores/chroma)

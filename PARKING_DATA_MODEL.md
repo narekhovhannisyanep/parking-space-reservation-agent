@@ -42,22 +42,38 @@ moving from an older schema: Chroma merges metadata on upsert. See README for se
 The fixture is space inventory, not complete coverage of all required general
 parking and location questions. That information coverage remains Stage 1 work.
 
-Static-data updates require administrator approval as an accepted user addition.
-The current seed command validates/upserts data but does not enforce that approval.
+At server startup, missing/empty configured collections are immediately seeded from
+the approved mock fixture. Populated collections are reused unchanged. Static-data
+change/approval workflows are outside the agreed scope.
 
 ## Dynamic information (storage and retrieval implemented)
 
 SQLite stores `working_hours`, `prices`, and `availability` as JSON snapshots keyed
 by `(location_id, kind)`, with UTC `updated_at` write timestamps. CRUD operations
 are transactional. Values must be JSON-compatible with string keys and finite numbers.
-Dynamic storage is unseeded; writes require explicit Python calls.
+Dynamic storage is recreated empty at each application-server startup; writes require
+explicit Python calls. This reset does not happen for new conversation threads.
 
 Information turns read these snapshots and instruct the model to use them for
 operational facts rather than static prose or earlier chat. Missing/null/omitted
-values mean unknown. Write timestamps do not prove freshness, and snapshots do not
+hours/prices mean unknown. Write timestamps do not prove freshness, and snapshots do not
 allocate spaces or establish availability for a requested booking period.
-The simple payload contents needed by the chatbot remain to be agreed; no external
-occupancy-feed or refresh-service platform is required by the assignment.
+Availability suggestions use a location-wide boolean snapshot or a space-ID/boolean
+map. `False` blocks the applicable space(s); absent snapshots or absent map IDs leave
+the static-available-by-default assumption in effect. Null, counts, string statuses,
+and other unsupported shapes fail selection rather than silently offering spaces.
+This is a public snapshot contract, not a reservation/hold ledger schema. Period-based
+holds, their statuses, and cleanup will be agreed in the subsequent reservation change.
+
+Python reads inventory IDs and applies dynamic eligibility before semantic ranking.
+Chroma embeds the fixed public-topic query derived from the latest user message and
+returns up to three eligible similarity matches using a native result limit. No space
+features are modeled, and the whole inventory is not randomly sampled. Only retrieved
+descriptions appear in `availability_options`. Non-offer retrieval
+uses `static_spaces` for directions/identity. Offered `space_id` values live in the
+thread's internal `offered_space_ids` list; suggestions never write or hold spaces.
+The server also prepares bounded baseline evidence before interaction, without adding
+the entire static inventory to prompts. No occupancy-feed/refresh-service platform is needed.
 
 ## Reservation details (collection implemented)
 
@@ -89,10 +105,18 @@ Only human-approved reservations may be written as:
 `Name | Car Number | Reservation Period | Approval Time`
 
 Collect both first name and surname for `Name`; exact rendering and output-file
-location remain to be chosen with the recording implementation. Pending/refused
+layout remain to be chosen with the recording implementation. Pending/refused
 requests are not approved records. Approval is not proof that recording succeeded.
 The recording service must meet the assignment's security and reliability requirements.
 
-Pending-request holds were discussed but not selected. Do not implement them or
-design expiry/release services without checking with the user. Communication channel,
-MCP implementation (or permitted fallback), and detailed allocation workflow remain open.
+SQLite is the authoritative operational reservation state. The Stage 3 file is an
+approved-only output, not another source to synchronize/read for allocation. A failed
+file write retains approval and allocation in SQLite and must be reported explicitly.
+The dedicated disposable `.data/approved-reservations/` output directory will be
+dropped/recreated at startup during Stage 3; that cleanup is not implemented yet.
+Approval reversal is out of scope. Output-file layout and retries remain undecided.
+
+Pending-request holds are selected for the later flow, before human review. Hold
+timing, overlap eligibility, refusal handling, and on-demand validation/cleanup still
+need agreement; no timers/background cleanup or reservation ledger is implemented here.
+Communication channel and MCP implementation (or permitted fallback) remain open.

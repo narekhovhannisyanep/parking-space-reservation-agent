@@ -26,6 +26,8 @@ class StorageConfig:
             if str(path) in (".", ":memory:"):
                 raise ValueError("Storage paths must identify persistent disk locations.")
             object.__setattr__(self, name, (PROJECT_ROOT / path).resolve())
+        if self.sqlite_path.is_relative_to(self.chroma_directory):
+            raise ValueError("Disposable SQLite storage must be outside the persistent Chroma directory.")
         if not re.fullmatch(r"[a-zA-Z0-9][a-zA-Z0-9._-]{1,510}[a-zA-Z0-9]", self.chroma_collection):
             raise ValueError("Chroma collection must be 3-512 characters with alphanumeric endpoints.")
         for value in (self.embedding_deployment, self.embedding_model):

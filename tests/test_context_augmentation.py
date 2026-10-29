@@ -41,6 +41,8 @@ class ContextTests(unittest.TestCase):
     def setUp(self):
         self.static = Mock(spec=StaticParkingStore)
         self.static.search.return_value = [space()]
+        self.static.list_space_ids.return_value = []
+        self.static.get_spaces.return_value = []
         self.dynamic = Mock(spec=DynamicParkingStore)
         self.dynamic.list_facts.return_value = []
         self.config = ContextConfig()
@@ -62,7 +64,7 @@ class ContextTests(unittest.TestCase):
         ]
         context = self.retrieve()
         data = decode(context)
-        self.static.search.assert_called_once_with("entrance", location_id="demo-central", k=4)
+        self.static.search.assert_called_once_with("entrance", location_id="demo-central", k=3)
         self.dynamic.list_facts.assert_called_once_with("demo-central")
         self.assertEqual(data["dynamic_facts"]["prices"]["value"]["hourly"], 9)
         self.assertEqual(data["dynamic_facts"]["availability"]["value"], {"A1": False})

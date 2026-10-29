@@ -15,8 +15,15 @@
   artifacts into mandatory requirements. Do not turn existing code into a specification.
 - Preserve accepted choices below. If simplification would change one, or a choice is
   genuinely unclear, ask the user before proceeding. A discussed idea is not a decision.
-- This documentation cleanup does not authorize a code refactor; refactoring is the
-  next task to discuss with the user.
+- **Questions and discussion are welcome:** the user treats design discussions as a
+  learning opportunity. Ask promptly whenever ambiguity, a trade-off, or a consequential
+  assumption arises; do not silently guess to avoid interrupting progress. Explain the
+  relevant behavior and your recommendation so the user can make an informed decision.
+  Exercise judgment on routine implementation details within agreed scope, but do not
+  interpret trust in that judgment as permission to make unagreed product decisions.
+- The database-startup/availability-suggestions implementation is deliberately limited
+  to preparation and options. Reservation holds, administrator decisions, and recording
+  are subsequent work; discuss their remaining choices before implementing them.
 
 ## Required outcomes
 
@@ -59,10 +66,46 @@ as code are extra-credit artifacts; see the baseline for details.
   vehicle by project assumption. No vehicle categories, dimensions, or facility-feature
   modeling. `car_number` is a user-provided vehicle identifier, including for vehicles
   without plates; do not require a plate format or invent an identifier.
-- **Static-data approval:** retain the user-requested administrator approval of static
-  knowledge changes before ingestion. This is an accepted addition, not an assignment
-  requirement, and is separate from reservation approval. No elaborate ingestion
-  platform is requested; the current seed CLI does not enforce this approval.
+- **Static seed and reuse:** the bundled `storage/parking_spaces.json` mock inventory
+  is approved for initial seeding. At server startup, open the configured Chroma
+  collection and immediately seed it if missing or empty. Reuse a populated collection
+  unchanged; do not compare seed contents, timestamps, or freshness on each run.
+  A static-data-change/approval workflow is no longer in scope.
+- **Startup readiness:** before accepting user interaction, both databases and bounded
+  baseline evidence must be ready. Clear/reinitialize SQLite empty at each application
+  server startup, not at each thread or graph run. Startup preparation failures must
+  stop startup with a clear exception, not leave a superficially working chatbot.
+- **Availability suggestions:** static inventory spaces are available by default unless
+  applicable dynamic state blocks them. Read dynamic data when needed; a failed read
+  is not an empty database. For availability/request topics, Python derives a fixed
+  public-topic query from the latest user message, applies dynamic eligibility, and
+  retrieves up to three similarity-ranked eligible records using Chroma embeddings.
+  Native result limits are supported, so no random sampling is needed. If a retriever
+  cannot limit results, random selection may only use its semantic candidates, never
+  the whole inventory. An LLM does not decide eligibility. Do not include all inventory
+  in the prompt. Keep offered IDs in
+  thread state without writing/holding spaces merely because they were suggested.
+  Space IDs are needed for tracking, not size/type/feature matching or arbitrary-ID search.
+- **Reservation state and recording:** SQLite is the intended authoritative operational
+  reservation state; the Stage 3 text file is an approved-only output, not a second
+  allocation source to synchronize or read back during normal operation. Approval
+  reversal is not in scope. Human approval and successful file writing remain separate
+  outcomes. If file writing fails, retain the human-approved reservation and its
+  applicable allocation in SQLite, explicitly report recording failure, and never
+  claim the file was written. Retry behavior remains to be agreed during Stage 3.
+- **Recording output cleanup:** `.data/approved-reservations/` is dedicated entirely to
+  disposable generated recording output. Drop/recreate that directory at application
+  server startup alongside the SQLite reset; do not require a manifest of generated
+  files. Keep deletion confined to this dedicated directory, never its parent or the
+  static database. Single-file versus per-reservation output remains undecided. This
+  choice may be revisited if Stage 3 reveals a concrete need, not hypothetical future
+  requirements; do not implement recording or its cleanup in the startup/suggestions
+  change.
+- **Later request holds:** a requested space must be recorded in SQLite as held before
+  administrator review, and human approval changes its reservation status. Retain
+  reservation period and approval time. Detailed selection/hold timing, overlap rules,
+  and on-demand validation/cleanup remain to be agreed when implementing this flow;
+  do not invent hold expiry timers or background cleanup infrastructure.
 - **Entry point:** LangGraph CLI + LangSmith Studio, not a terminal chat loop.
   No additional public UI or production deployment platform has been requested.
 - **Agent ownership:** `ParkingSpaceReservationAgent` owns configuration, shared clients,
@@ -79,21 +122,35 @@ as code are extra-credit artifacts; see the baseline for details.
 ## Current implementation, not additional requirements
 
 - Python >=3.12. Imports/graph construction do not load `.env`, initialize clients,
-  create databases, or make network calls. CLI loads `.env`; resources initialize lazily.
+  create databases, or make network calls. CLI loads `.env`; the server lifespan prepares
+  storage/evidence before requests, while model clients remain lazy. Module exports
+  `app:agent` and `app:webapp` share one agent. The exported graph rejects unprepared runs.
   Models, embeddings, stores, and checkpointers can be injected for offline tests.
 - Current graph: `START → reservation_collection`; information turns continue through
   `context_augmentation → parking_assitant → END`. Deterministic collection replies
-  go directly to `parking_assitant → END` without retrieval.
+  go directly to `parking_assitant → END` without retrieval, except incomplete request
+  turns mentioning availability/reservation, which retrieve options before replying.
 - Chroma static retrieval and SQLite JSON snapshot CRUD are implemented and graph-wired.
-  Eight mock spaces are available through explicit seeding; dynamic data is unseeded.
-  Chat does not seed either database. Default storage paths are project-root `.data/`.
+  Missing/empty Chroma collections are immediately seeded with eight mock spaces at
+  server startup; populated collections are reused unchanged. SQLite is reset empty
+  once per server lifespan. Chat does not seed/reset either database. Default paths
+  are project-root `.data/`; SQLite cannot reside inside the persistent Chroma directory.
 - Static inventory currently uses schema version 2 and collection `parking_spaces_v2`.
   Exact space filters retain location/type/schema scope. See README for migration and
-  PARKING_DATA_MODEL.md for implemented fields; do not erase existing databases.
+  PARKING_DATA_MODEL.md for implemented fields; do not erase existing static databases
+  to migrate.
 - Context retrieval uses fixed English public-topic queries instead of raw user text,
   reads location-scoped dynamic facts, and augments only a copy of the latest user
-  message. Missing facts mean unknown. Operational answers are instructed to use
-  dynamic facts; snapshots do not allocate or confirm booking availability.
+  message. Hours/prices-only turns omit space inventory; generic turns reuse bounded
+  startup static evidence. Availability/request turns semantically retrieve up to three
+  scoped spaces using the message-derived topic query, constrained to IDs eligible
+  under successfully read dynamic overrides. They do not sample the entire inventory.
+  Existing
+  public availability snapshots support a boolean or space-ID/boolean map (`False`
+  blocks); absent state leaves static spaces available by default. Unsupported/null
+  snapshots fail selection. Offered IDs stay thread-scoped; suggestions do not hold
+  spaces. Hours/prices remain unknown when missing. These snapshots do not allocate
+  or confirm availability for a booking period; a future hold ledger is not implemented.
 - Draft collection, field validation, and user confirmation are implemented.
   `ValidatedReservationRequest` means collected details, not a submission or approval.
   Current code uses explicit dates/timezones, UTC normalization, draft revisions,
@@ -113,14 +170,16 @@ as code are extra-credit artifacts; see the baseline for details.
 
 - Complete Stage 1 information coverage, required guardrails, and evaluation.
 - Choose the administrator communication channel and simple approval/refusal workflow.
-- Choose MCP implementation (or permitted fallback), output-file location, and the
-  practical access protection needed by the recording service.
+- Choose MCP implementation (or permitted fallback), output-file layout and retry
+  behavior, and the practical access protection needed by the recording service.
 - Implement the accepted code-controlled reservation/allocation approach and connect
   approval to recording. A user acknowledgment is not administrator approval; pending
   or refused requests must not be recorded, and approval alone does not prove a write.
-- Pending-request holds were discussed but **not selected**. Ask before adopting them;
-  do not invent hold expiry/release systems or make a new reservation-ledger architecture
-  a prerequisite. Decide only the booking behavior needed when implementing that step.
+- Retain startup readiness, static reuse/seeding, SQLite reset, three-option suggestions,
+  and their offline tests when implementing subsequent workflow stages.
+- For the later selected hold flow, agree on request timing, interval-based eligibility,
+  administrator refusal handling, and on-demand validation/cleanup. A detailed
+  reservation-ledger architecture is not a prerequisite for startup and suggestions.
 - Finish integration/load tests and assignment documentation. Do not create a backlog
   of hypothetical production UI, tenancy, scaling, observability, or infrastructure work.
 

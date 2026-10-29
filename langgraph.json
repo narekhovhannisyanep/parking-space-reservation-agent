@@ -1,7 +1,10 @@
 {
     "dockerfile_lines": [],
     "graphs": {
-        "parking_space_reservation": "./app.py:agent"
+        "parking_space_reservation": "app:agent"
+    },
+    "http": {
+        "app": "app:webapp"
     },
     "env": "./.env",
     "python_version": "3.12",

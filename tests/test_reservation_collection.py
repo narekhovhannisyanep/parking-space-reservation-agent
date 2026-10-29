@@ -276,6 +276,8 @@ class GraphCollectionTests(unittest.IsolatedAsyncioTestCase):
         self.model.ainvoke = AsyncMock(return_value=AIMessage("Public parking information"))
         self.static = Mock(spec=StaticParkingStore)
         self.static.search.return_value = []
+        self.static.list_space_ids.return_value = []
+        self.static.get_spaces.return_value = []
         self.dynamic = Mock(spec=DynamicParkingStore)
         self.dynamic.list_facts.return_value = []
         self.now = NOW
@@ -321,8 +323,8 @@ class GraphCollectionTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result["messages"][-1].content, confirmation_summary(session.request))
         self.assertEqual(set(result), {"messages"})
         self.model.invoke.assert_not_called()
-        self.static.search.assert_not_called()
-        self.dynamic.list_facts.assert_not_called()
+        self.static.search.assert_called_once_with("availability", location_id="demo-central", k=3, eligible_ids=[])
+        self.dynamic.list_facts.assert_called_once_with("demo-central")
         self.assertEqual(self.extractor.invoke.call_count, 4)
 
     def test_confirmation_comes_only_from_a_later_user_turn_and_never_means_approval(self):

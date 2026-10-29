@@ -63,6 +63,7 @@ class StaticParkingStore:
         self._embeddings = embeddings if embeddings is not None else _LazyAzureEmbeddings(config)
         self._store: Chroma | None = None
         self._lock = Lock()
+        self._seed_lock = Lock()
 
     def _get_store(self) -> Chroma:
         with self._lock:
@@ -75,6 +76,48 @@ class StaticParkingStore:
                     client_settings=Settings(anonymized_telemetry=False),
                 )
             return self._store
+
+    def initialize(self) -> None:
+        """Open the collection and immediately seed it only if missing/empty.
+
+        A populated collection is reused unchanged, without even loading the fixture.
+        This is a server-startup operation, never a conversation/graph operation.
+        """
+        from storage.seed import load_documents
+
+        with self._seed_lock:
+            store = self._get_store()
+            if not store.get(limit=1, include=[])["ids"]:
+                self.upsert_documents(load_documents())
+
+    def list_space_ids(self, location_id: str) -> list[str]:
+        """Read scoped document IDs only, without embeddings or inventory prose."""
+        where = SpaceFilters().where(location_id)
+        ids = self._get_store().get(where=where, include=[])["ids"]
+        for identifier in ids:
+            prefix = f"{location_id}:space:"
+            if not identifier.startswith(prefix):
+                raise ValueError("Static inventory contains a noncanonical space ID.")
+            SpaceFilters(space_id=identifier.removeprefix(prefix))
+        return ids
+
+    def get_spaces(self, ids: list[str], *, location_id: str) -> list[Document]:
+        """Read selected scoped inventory records, preserving the selected order."""
+        where = SpaceFilters().where(location_id)
+        if not ids:
+            return []
+        if len(set(ids)) != len(ids):
+            raise ValueError("Selected space IDs must be unique.")
+        result = self._get_store().get(ids=ids, where=where, include=["documents", "metadatas"])
+        documents = {
+            identifier: Document(id=identifier, page_content=text, metadata=metadata)
+            for identifier, text, metadata in zip(result["ids"], result["documents"], result["metadatas"], strict=True)
+        }
+        if set(documents) != set(ids):
+            raise RuntimeError("Selected parking inventory is missing or outside the configured location.")
+        for document in documents.values():
+            ParkingSpace.validate_document(document)
+        return [documents[identifier] for identifier in ids]
 
     @staticmethod
     def validate_documents(documents: list[Document]) -> list[str]:
@@ -96,9 +139,19 @@ class StaticParkingStore:
         return self._get_store().add_documents(documents, ids=ids)
 
     def search(
-        self, query: str, *, location_id: str, k: int = 4, filters: SpaceFilters | None = None
+        self,
+        query: str,
+        *,
+        location_id: str,
+        k: int = 4,
+        filters: SpaceFilters | None = None,
+        eligible_ids: list[str] | None = None,
     ) -> list[Document]:
-        """Filter exact space constraints, then rank; this does NOT check availability."""
+        """Rank scoped inventory, optionally restricted to Python-selected eligible IDs.
+
+        This store does not decide availability. The caller derives eligibility from
+        dynamic data; the additional filter cannot broaden location/schema scope.
+        """
         if not isinstance(query, str) or not query.strip():
             raise ValueError("Query must be nonblank text.")
         if type(k) is not int or k < 1:
@@ -106,6 +159,20 @@ class StaticParkingStore:
         if filters is not None and not isinstance(filters, SpaceFilters):
             raise TypeError("filters must be validated SpaceFilters, not an arbitrary metadata query.")
         where = (filters if filters is not None else SpaceFilters()).where(location_id)
+        if eligible_ids is not None:
+            if len(set(eligible_ids)) != len(eligible_ids):
+                raise ValueError("Eligible document IDs must be unique.")
+            space_ids = []
+            prefix = f"{location_id}:space:"
+            for identifier in eligible_ids:
+                if not isinstance(identifier, str) or not identifier.startswith(prefix):
+                    raise ValueError("Eligible document IDs must belong to the configured location.")
+                space_id = identifier.removeprefix(prefix)
+                SpaceFilters(space_id=space_id)
+                space_ids.append(space_id)
+            if not space_ids:
+                return []
+            where["$and"].append({"space_id": {"$in": space_ids}})
         store = self._get_store()
         # Avoid embedding calls on unseeded stores and clamp k to available documents.
         available = store.get(where=where, limit=k, include=[])["ids"]

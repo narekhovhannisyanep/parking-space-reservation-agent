@@ -13,6 +13,7 @@ dependencies = [
     "langsmith>=0.14.11",
     "notebook>=7.6.3",
     "python-dotenv>=1.2.4",
+    "starlette>=1.10.0",
 ]
 
 [tool.ruff]

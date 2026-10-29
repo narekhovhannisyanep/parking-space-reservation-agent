@@ -37,7 +37,8 @@ class AppTests(unittest.TestCase):
 
     def test_langgraph_configuration_points_to_the_export(self):
         config = json.loads(Path(app.__file__).with_name("langgraph.json").read_text())
-        self.assertEqual(config["graphs"]["parking_space_reservation"], "./app.py:agent")
+        self.assertEqual(config["graphs"]["parking_space_reservation"], "app:agent")
+        self.assertEqual(config["http"]["app"], "app:webapp")
         self.assertEqual(config["env"], "./.env")
 
 

@@ -56,6 +56,19 @@ class DynamicParkingStore:
                     )
                 self._initialized = True
 
+    def reset(self) -> None:
+        """Recreate the configured disposable database at server startup only.
+
+        No store operation retains a connection. Call before accepting interactions,
+        never while graph threads are running. Remove SQLite sidecars too, so an old
+        WAL cannot restore data into the new database. Never delete the parent folder.
+        """
+        with self._lock:
+            self._initialized = False
+            for suffix in ("", "-wal", "-shm", "-journal"):
+                self.config.sqlite_path.with_name(self.config.sqlite_path.name + suffix).unlink(missing_ok=True)
+        self._initialize()
+
     @contextmanager
     def _connection(self) -> Generator[sqlite3.Connection, None, None]:
         self._initialize()
