@@ -13,12 +13,14 @@ reliability, evaluation, and testing remain part of the assignment.
   transcribed from the user's screenshots.
 - [AGENTS.md](AGENTS.md): user intent, accepted choices, current status, and open decisions.
 - [PARKING_DATA_MODEL.md](PARKING_DATA_MODEL.md): implemented fields and data boundaries.
+- [RAG_EVALUATION.md](RAG_EVALUATION.md): retrieval/answer/latency evaluation report.
+- [GUARDRAIL_EVALUATION.md](GUARDRAIL_EVALUATION.md): synthetic privacy-detector evaluation.
 
 ## Current status
 
 | Stage | Implemented | Still needed |
 | --- | --- | --- |
-| 1: RAG/chatbot | Startup-ready Chroma/SQLite stores, 20-record fixture, graph-wired retrieval, three semantic eligibility-filtered options, draft collection/validation/user confirmation, layered local privacy guards and synthetic guardrail evaluation | Complete parking-information data, broader privacy/accuracy evaluation, live accuracy checks, RAG performance evaluation/report |
+| 1: RAG/chatbot | Startup-ready Chroma/SQLite stores, 20-record fixture, graph-wired retrieval, three semantic eligibility-filtered options with location-preference terms and "other options" follow-ups, draft collection/validation/user confirmation, layered local privacy guards, synthetic guardrail evaluation, synthetic RAG retrieval/answer/latency evaluation and report | Optional retrieval tuning (see RAG_EVALUATION.md limits) |
 | 2: Human approval | Two-agent approach selected | Administrator agent, communication channel, request escalation, approval/refusal handling |
 | 3: Approved recording | File format and Python-owned recording responsibility selected | MCP service (or permitted fallback), access protection, approved-only file writes |
 | 4: Orchestration | Conversation graph and offline integration tests | Complete approval/recording pipeline, end-to-end/load tests, completed usage/deployment documentation |
@@ -232,9 +234,13 @@ availability checks for a requested period. A write timestamp does not prove fre
 
 ### Information retrieval
 
-For information turns, code builds queries from fixed English public-topic terms
-(entrance, lift, location/directions, hours, prices, availability), never raw user
-text or draft values. Unknown topics use `parking information` and reuse the bounded
+For information turns, code builds queries from fixed English public-topic terms,
+never raw user text or draft values. Terms cover entrance, gate, lift, stairs, lobby,
+pedestrian walkway, outdoor area, ground/first/second level, compass directions, wall,
+fence, corner, location/directions, hours, prices, and availability. Location terms are
+taken from the public inventory descriptions, so stated preferences affect ranking.
+Request wording includes spaces/spots/places/slots, park (verb), free (except "free of
+charge"), vacant, reserve/book, and options; "Tell me about parking" is information only. Unknown topics use `parking information` and reuse the bounded
 startup static evidence. Location/directions topics still use semantic retrieval.
 Hours/prices-only turns include only the requested operational facts, not space
 inventory or unrelated availability snapshots. Dynamic facts
@@ -253,6 +259,17 @@ ordinary static directions evidence. Offered IDs are retained in thread state, n
 public graph input/output, and do not write or hold any space. Initial incomplete
 reservation requests can display options alongside deterministic collection replies;
 confirmation summaries and control commands retain their existing behavior.
+
+**Other options.** A follow-up such as "Show me other options", "Any different spots?"
+or "More spaces" excludes every space already offered in the current offer round,
+before ranking, and returns up to three new eligible spaces. Exclusions come only from
+code-tracked thread state (`offer_round_ids`), never from model text. A fresh request
+without "other/more" starts a new round; `/cancel` and `/new` clear it. When nothing
+remains, the evidence has an empty `availability_options` list and
+`previous_offers_excluded` so the reply can say no further alternatives exist.
+Blocked spaces are filtered before ranking, so fewer than three (or zero) options are
+offered only when fewer eligible spaces remain, never because a blocked best match
+displaced an eligible one.
 
 JSON evidence is appended only to a copy of the latest user message for the model.
 Dynamic snapshots have evidence-budget priority and are the instructed source for
@@ -389,25 +406,38 @@ live tests are skipped unless explicitly enabled):
 .venv/bin/python -m unittest discover -s tests -v
 ```
 
+Tests use the standard-library `unittest` framework (the assignment accepts pytest or
+unittest), so pytest is not a project dependency. If you install pytest yourself, it
+can also discover and run these `unittest` test cases.
+
 Run the synthetic privacy evaluation with `.venv/bin/python -m guardrail_evaluation`.
 It prints case IDs/counts, coverage metrics, and warm detector latency; no files are
-written. It does not replace the still-required live RAG evaluation or load tests.
+written.
+
+Run the RAG evaluation (see [RAG_EVALUATION.md](RAG_EVALUATION.md)); the live CLI needs
+the VPN and uses temporary stores only:
+
+```bash
+uv run --no-sync --env-file .env python -m rag_evaluation --part retrieval  # or --part all
+```
+
+Neither evaluation is a load test; load testing remains Stage 4 work.
 
 Coverage includes Chroma/SQLite CRUD and persistence, validation/isolation/concurrency,
 startup seeding/static reuse, SQLite reset/failure propagation, real Starlette lifespan,
 eligibility-constrained semantic ranking/query privacy/thread isolation, context refresh/budgets/message preservation,
 sync/async execution, and draft
 collection/confirmation/timezone handling, public PII rejection, extraction redaction,
-old-draft filtering, local-model readiness, and guarded sync/async streaming. It does
-not establish live model accuracy, complete privacy enforcement, or completion of
-the assignment's RAG evaluation/load tests.
+old-draft filtering, local-model readiness, guarded sync/async streaming, request/
+location-term detection, "other options" exclusion, and RAG evaluation metrics/rules.
+It does not establish complete privacy enforcement or completion of load tests.
 
 Source checks:
 
 ```bash
 uv tool run ty check
-uv tool run ruff check app.py parking_agent.py guardrails.py guardrail_evaluation.py reservation_collection.py context_augmentation.py commons storage tests
-uv tool run ruff format --check app.py parking_agent.py guardrails.py guardrail_evaluation.py reservation_collection.py context_augmentation.py commons storage tests
+uv tool run ruff check app.py parking_agent.py guardrails.py guardrail_evaluation.py rag_evaluation.py reservation_collection.py context_augmentation.py commons storage tests
+uv tool run ruff format --check app.py parking_agent.py guardrails.py guardrail_evaluation.py rag_evaluation.py reservation_collection.py context_augmentation.py commons storage tests
 ```
 
 ## Next steps

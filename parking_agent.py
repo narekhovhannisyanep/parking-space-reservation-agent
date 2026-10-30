@@ -31,6 +31,7 @@ from context_augmentation import (
     CONTEXT_HEADER,
     ContextConfig,
     asks_availability,
+    asks_other_options,
     augmented_messages,
     latest_user_index,
     offered_space_ids,
@@ -69,6 +70,8 @@ class ParkingState(ParkingMessages):
     reservation: dict = field(default_factory=dict)
     reservation_reply: str = ""
     offered_space_ids: list[str] = field(default_factory=list)
+    # All IDs offered since the latest fresh availability request, for "other options".
+    offer_round_ids: list[str] = field(default_factory=list)
     privacy_values: list[str] = field(default_factory=list)
 
 
@@ -291,6 +294,7 @@ class ParkingSpaceReservationAgent:
         }
         if text.strip() in {"/cancel", "/new"}:
             updates["offered_space_ids"] = []
+            updates["offer_round_ids"] = []
         return updates
 
     def _reservation_collection(self, state: ParkingState, config: RunnableConfig) -> dict:
@@ -366,6 +370,9 @@ class ParkingSpaceReservationAgent:
         return updates
 
     def _context_augmentation(self, state: ParkingState) -> dict:
+        # Exclusions come only from code-tracked offers, never from model replies.
+        follow_up = asks_other_options(state.messages, self.config.context)
+        previous = state.offer_round_ids if follow_up else []
         try:
             context = retrieve_context(
                 state.messages,
@@ -374,6 +381,7 @@ class ParkingSpaceReservationAgent:
                 self.config.context,
                 baseline_documents=self._baseline_documents,
                 privacy_guard=self.privacy_guard,
+                excluded_space_ids=previous,
             )
         except GuardrailError:
             return self._guardrail_failure(state)
@@ -381,6 +389,7 @@ class ParkingSpaceReservationAgent:
         options = offered_space_ids(context)
         if options is not None:
             updates["offered_space_ids"] = options
+            updates["offer_round_ids"] = list(dict.fromkeys([*previous, *options]))
         return updates
 
     async def _acontext_augmentation(self, state: ParkingState) -> dict:

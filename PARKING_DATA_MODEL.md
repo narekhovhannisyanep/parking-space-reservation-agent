@@ -76,6 +76,9 @@ features are modeled, and the whole inventory is not randomly sampled. Only retr
 descriptions appear in `availability_options`. Non-offer retrieval
 uses `static_spaces` for directions/identity. Offered `space_id` values live in the
 thread's internal `offered_space_ids` list; suggestions never write or hold spaces.
+`offer_round_ids` accumulates every ID offered since the latest fresh request; an
+"other options" follow-up excludes them before ranking. When set, the evidence also
+carries `previous_offers_excluded` (a count, not IDs).
 The server also prepares bounded baseline evidence before interaction, without adding
 the entire static inventory to prompts. No occupancy-feed/refresh-service platform is needed.
 

@@ -127,6 +127,11 @@ as code are extra-credit artifacts; see the baseline for details.
   and model outputs are sanitized; own-draft summaries remain code-generated. Studio,
   checkpoints and debug/state APIs remain trusted local development surfaces, not a
   multi-user authorization boundary. Do not claim complete confidentiality.
+- **Learning-project focus:** this is a RAG/LangGraph learning project, not a parking
+  business. Do not add facility address, cost/pricing models, or booking-process
+  content. Space descriptions are the public location evidence; hours/prices remain
+  unknown unless supplied through Python CRUD. Requests are free: the user picks one
+  of the three offered options, and the administrator approves or refuses it.
 - **Sequential reservations:** multiple spaces in one conversation are separate
   sequential one-space requests, not one multi-space request. Submission is later work;
   timing, overlap, refusal/release and cleanup rules still require agreement.
@@ -156,8 +161,11 @@ as code are extra-credit artifacts; see the baseline for details.
   Exact space filters retain location/type/schema scope. See README for migration and
   PARKING_DATA_MODEL.md for implemented fields; do not erase existing static databases
   to migrate.
-- Context retrieval uses fixed English public-topic queries instead of raw user text,
-  reads location-scoped dynamic facts, and augments only a copy of the latest user
+- Context retrieval uses fixed English public-topic queries instead of raw user text.
+  The code-owned vocabulary includes location terms taken from fixture descriptions
+  (stairs, outdoor area, levels, compass directions, wall, fence, lobby, walkway, corner)
+  and request words (spot/place/park/vacant/options; "free of charge" is not a request).
+  Retrieval reads location-scoped dynamic facts, and augments only a copy of the latest user
   message. Hours/prices-only turns omit space inventory; generic turns reuse bounded
   startup static evidence. Availability/request turns semantically retrieve up to three
   scoped spaces using the message-derived topic query, constrained to IDs eligible
@@ -166,7 +174,10 @@ as code are extra-credit artifacts; see the baseline for details.
   public availability snapshots support a boolean or space-ID/boolean map (`False`
   blocks); absent state leaves static spaces available by default. Unsupported/null
   snapshots fail selection. Offered IDs stay thread-scoped; suggestions do not hold
-  spaces. Hours/prices remain unknown when missing. These snapshots do not allocate
+  spaces. "Other/different/more options" follow-ups exclude every ID offered in the
+  current round (`offer_round_ids`, code-tracked, never model text) before ranking; a
+  fresh request, `/cancel`, or `/new` starts a new round. Blocked spaces are filtered
+  before ranking, so fewer than three options appear only when fewer eligible remain. Hours/prices remain unknown when missing. These snapshots do not allocate
   or confirm availability for a booking period; a future hold ledger is not implemented.
 - Draft collection, field validation, and user confirmation are implemented.
   `ValidatedReservationRequest` means collected details, not a submission or approval.
@@ -190,18 +201,27 @@ as code are extra-credit artifacts; see the baseline for details.
   remain unchanged at startup; README documents a one-time explicit seed upsert. Do not
   erase static data or silently apply fixture changes.
 - GUARDRAIL_EVALUATION.md and guardrail_evaluation.py provide synthetic local privacy
-  evaluation, not the complete RAG evaluation/report or load tests. Boundary tests
-  cover contamination, detector failure, old drafts and actual guarded streaming.
-- Offline tests cover storage, graph integration, and draft collection. Live model
-  accuracy, RAG evaluation/reporting, and required load tests are not complete.
-- All four stages remain incomplete. Submission, administrator communication/decision
+  evaluation. Boundary tests cover contamination, detector failure, old drafts and
+  actual guarded streaming.
+- RAG_EVALUATION.md and rag_evaluation.py provide the Stage 1 evaluation report:
+  20 labeled retrieval queries (Recall@3/capped recall/Precision@3/Hit@3/MRR, measured
+  before and after the vocabulary change with real embeddings), request detection,
+  follow-up disjointness, 13 rule-checked live answer conversations, and per-node
+  latency. Answers use rules, not an LLM grader. Remaining weak spots (lift/elevator
+  synonyms, one-word topics, exact-ID lookup, not all offered options mentioned by
+  the model) are documented, not tuned, to avoid overfitting the small labeled set.
+- Offline tests cover storage, graph integration, draft collection, retrieval topics
+  and evaluation harness. Required load tests are not complete (Stage 4).
+- Stage 1 requirements are implemented; optional retrieval tuning remains possible.
+  Stages 2–4 remain incomplete. Submission, administrator communication/decision
   handling, allocation, MCP/file recording, and the complete pipeline are not implemented.
 
 ## Next-session handoff
 
 - **Where we stopped:** database startup preparation, bounded semantic availability
   suggestions, reservation draft collection, 20-record fixture, and layered local
-  privacy guards/synthetic evaluation are implemented. Studio was working
+  privacy guards/synthetic evaluation, location-term retrieval with "other options"
+  follow-ups, and the RAG evaluation report are implemented. Studio was working
   after connecting the required VPN; `/ok`, `/info`, and assistant discovery returned
   HTTP 200. No code/provider change was needed for that connection issue. Do not redo
   the startup implementation or treat Studio connectivity as live-model evaluation.
@@ -209,8 +229,8 @@ as code are extra-credit artifacts; see the baseline for details.
   to the existing project collection. Use the documented explicit upsert if needed.
 - **First action:** review the current implementation and remaining work below with
   the user, then agree on the next implementation slice. No next hold/administrator
-  slice or its detailed rules have been selected. Completing Stage 1 information
-  coverage and live RAG evaluation remains available, not a newly imposed order.
+  slice or its detailed rules have been selected. Stage 1 is complete; optional
+  retrieval tuning should be re-measured with rag_evaluation.py.
 - **Before the reservation/administrator slice:** settle space selection/submission
   timing, period-overlap eligibility, refusal handling, on-demand validation/cleanup,
   and administrator communication channel. Then implement the agreed SQLite hold
@@ -228,8 +248,8 @@ as code are extra-credit artifacts; see the baseline for details.
 
 ## Remaining decisions and work
 
-- Complete Stage 1 information coverage and live RAG evaluation/report. Broaden privacy
-  evaluation as needed; the synthetic detector report is not complete confidentiality,
+- Optional: tune retrieval weak spots listed in RAG_EVALUATION.md and re-measure.
+  Broaden privacy evaluation as needed; the synthetic detector report is not complete confidentiality,
   authorization, or live-model correctness.
 - Choose the administrator communication channel and simple approval/refusal workflow.
 - Choose MCP implementation (or permitted fallback), output-file layout and retry
@@ -245,6 +265,15 @@ as code are extra-credit artifacts; see the baseline for details.
 - Finish integration/load tests and assignment documentation. Do not create a backlog
   of hypothetical production UI, tenancy, scaling, observability, or infrastructure work.
 
+## Development practice
+
+- Follow test-driven development for new features and refactoring: write or adjust
+  a failing test that states the intended behavior, then implement until it passes.
+- Cover the main project requirements and agreed behaviors, not a fixed test count
+  per module. Keep tests fast and offline by default (inject models, embeddings,
+  stores); live-provider checks stay opt-in. Avoid tests that slow development
+  without protecting a requirement or an agreed choice.
+
 ## Maintaining documentation
 
 - This file applies repository-wide unless a more specific AGENTS.md applies.
@@ -257,5 +286,6 @@ as code are extra-credit artifacts; see the baseline for details.
   Keep persistent project/collaboration instructions in `AGENTS.md`; do not recreate
   a separate memory instruction file.
 - Setup, commands, and behavior: README.md. Implemented data fields: PARKING_DATA_MODEL.md.
-  Synthetic privacy results/limits: GUARDRAIL_EVALUATION.md.
+  Synthetic privacy results/limits: GUARDRAIL_EVALUATION.md. RAG evaluation results/
+  limits: RAG_EVALUATION.md.
   Code style: pyproject.toml. Retain the MIT LICENSE and existing copyright notices.
