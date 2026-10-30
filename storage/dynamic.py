@@ -9,6 +9,7 @@ from datetime import UTC, datetime
 from threading import Lock
 from typing import Literal
 
+from guardrails import PrivacyGuard
 from storage.config import StorageConfig
 
 type FactKind = Literal["working_hours", "prices", "availability"]
@@ -32,8 +33,9 @@ class DynamicParkingStore:
     decided. Availability snapshots do not reserve capacity or authorize bookings.
     """
 
-    def __init__(self, config: StorageConfig) -> None:
+    def __init__(self, config: StorageConfig, *, privacy_guard: PrivacyGuard | None = None) -> None:
         self.config = config
+        self.privacy_guard = privacy_guard if privacy_guard is not None else PrivacyGuard()
         self._initialized = False
         self._lock = Lock()
 
@@ -113,6 +115,8 @@ class DynamicParkingStore:
         # Let the encoder reject cycles before traversing nested values ourselves.
         encoded = json.dumps(value, ensure_ascii=False, allow_nan=False)
         self._validate_json(value)
+        self.privacy_guard.check_public(location_id)
+        self.privacy_guard.check_public(value)
         with self._connection() as connection:
             # Acquire the write lock before timestamping to order concurrent writes.
             connection.execute("UPDATE parking_dynamic_facts SET updated_at = updated_at WHERE 0")

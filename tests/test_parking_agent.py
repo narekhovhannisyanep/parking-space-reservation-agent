@@ -127,9 +127,10 @@ class AgentTests(unittest.TestCase):
         agent.graph.invoke({"messages": [HumanMessage(content="I am Bob")]}, bob)
         agent.graph.invoke({"messages": [HumanMessage(content="What is my name?")]}, alice)
         last_prompt = model.invoke.call_args_list[-1].args[0]
-        self.assertEqual(
-            [message.content for message in last_prompt[1:]], ["I am Alice", "Hello Alice", "What is my name?"]
-        )
+        self.assertNotIn("Alice", str(last_prompt))
+        self.assertNotIn("Bob", str(last_prompt))
+        self.assertEqual(last_prompt[-1].content, "What is my name?")
+        self.assertEqual(agent.graph.get_state(alice).values["messages"][0].content, "I am Alice")
         self.assertEqual(len(agent.graph.get_state(alice).values["messages"]), 4)
         self.assertEqual(len(agent.graph.get_state(bob).values["messages"]), 2)
         self.assertEqual(model.invoke.call_args.kwargs["config"]["configurable"]["thread_id"], "alice")

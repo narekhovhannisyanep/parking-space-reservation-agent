@@ -10,6 +10,7 @@ from langchain_openai import AzureOpenAIEmbeddings
 from openai import APIError, OpenAIError
 from pydantic import ValidationError
 
+from guardrails import PrivacyGuard
 from storage.config import StorageConfig
 from storage.spaces import ParkingSpace, SpaceFilters
 
@@ -54,12 +55,15 @@ class _LazyAzureEmbeddings(Embeddings):
 class StaticParkingStore:
     """Lazy, persistent vector store. Ingestion is a trusted Python API, not an LLM tool.
 
-    Only validated space metadata is accepted. This is not a PII detector: callers must
-    review document text and sources before ingestion. Never index chats/reservations.
+    Metadata and detected PII are checked before embedding. Trusted source review is
+    still required: automatic detection cannot identify all PII. Never index chats.
     """
 
-    def __init__(self, config: StorageConfig, *, embeddings: Embeddings | None = None) -> None:
+    def __init__(
+        self, config: StorageConfig, *, embeddings: Embeddings | None = None, privacy_guard: PrivacyGuard | None = None
+    ) -> None:
         self.config = config
+        self.privacy_guard = privacy_guard if privacy_guard is not None else PrivacyGuard()
         self._embeddings = embeddings if embeddings is not None else _LazyAzureEmbeddings(config)
         self._store: Chroma | None = None
         self._lock = Lock()
@@ -134,6 +138,8 @@ class StaticParkingStore:
     def upsert_documents(self, documents: list[Document]) -> list[str]:
         """Insert/update by stable document ID; validate the entire batch before embedding."""
         ids = self.validate_documents(documents)
+        for document in documents:
+            self.privacy_guard.check_document(document)
         if not documents:
             return []
         return self._get_store().add_documents(documents, ids=ids)

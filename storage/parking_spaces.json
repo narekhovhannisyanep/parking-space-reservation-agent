@@ -30,5 +30,53 @@
   {
     "space_id": "OUT-C01", "location_id": "demo-central", "label": "C01",
     "description": "In the outdoor area beside the west fence.", "source": "mock-space-inventory-v2"
+  },
+  {
+    "space_id": "G-A03", "location_id": "demo-central", "label": "A03",
+    "description": "Past the east entry lane, beside the ground-level pedestrian corridor.", "source": "mock-space-inventory-v2"
+  },
+  {
+    "space_id": "G-A04", "location_id": "demo-central", "label": "A04",
+    "description": "Opposite the west vehicle entry, facing the central aisle.", "source": "mock-space-inventory-v2"
+  },
+  {
+    "space_id": "G-E03", "location_id": "demo-central", "label": "E03",
+    "description": "Across the ground-floor elevator lobby, along the pedestrian walkway.", "source": "mock-space-inventory-v2"
+  },
+  {
+    "space_id": "G-N01", "location_id": "demo-central", "label": "N01",
+    "description": "At the northeast corner, following the north-wall walkway.", "source": "mock-space-inventory-v2"
+  },
+  {
+    "space_id": "L1-B02", "location_id": "demo-central", "label": "B02",
+    "description": "On the first level opposite the eastern stairs.", "source": "mock-space-inventory-v2"
+  },
+  {
+    "space_id": "L1-E01", "location_id": "demo-central", "label": "E01-L1",
+    "description": "On the first level across from the elevator doors.", "source": "mock-space-inventory-v2"
+  },
+  {
+    "space_id": "L1-W01", "location_id": "demo-central", "label": "W01",
+    "description": "On the first level beside the west pedestrian passage.", "source": "mock-space-inventory-v2"
+  },
+  {
+    "space_id": "L2-B01", "location_id": "demo-central", "label": "B01-L2",
+    "description": "On the second level beside the northern stair landing.", "source": "mock-space-inventory-v2"
+  },
+  {
+    "space_id": "L2-E01", "location_id": "demo-central", "label": "E01-L2",
+    "description": "On the second level along the corridor to the elevator lobby.", "source": "mock-space-inventory-v2"
+  },
+  {
+    "space_id": "OUT-V02", "location_id": "demo-central", "label": "V02",
+    "description": "In the outdoor area just inside the south entry gate.", "source": "mock-space-inventory-v2"
+  },
+  {
+    "space_id": "OUT-C02", "location_id": "demo-central", "label": "C02",
+    "description": "In the outdoor area along the eastern boundary path.", "source": "mock-space-inventory-v2"
+  },
+  {
+    "space_id": "OUT-P01", "location_id": "demo-central", "label": "P01",
+    "description": "In the outdoor area opposite the path to the pedestrian lobby.", "source": "mock-space-inventory-v2"
   }
 ]

@@ -64,7 +64,7 @@ class StartupTests(ParkingFixture):
         self.dynamic.upsert_fact("other", "availability", False)
         self.agent.prepare_startup()
         self.assertTrue(self.agent.startup_ready)
-        self.assertEqual(len(self.static.list_space_ids("demo-central")), 8)
+        self.assertEqual(len(self.static.list_space_ids("demo-central")), 20)
         self.assertEqual(self.dynamic.list_facts("demo-central"), [])
         self.assertEqual(self.dynamic.list_facts("other"), [])
         evidence = decode(self.agent.baseline_context)
@@ -92,7 +92,7 @@ class StartupTests(ParkingFixture):
         with patch("storage.seed.load_documents", wraps=load_documents) as load:
             self.static.initialize()
         load.assert_called_once_with()
-        self.assertEqual(len(self.static.list_space_ids("demo-central")), 8)
+        self.assertEqual(len(self.static.list_space_ids("demo-central")), 20)
         self.assertFalse(self.storage.sqlite_path.exists())
 
     def test_restart_reuses_static_and_resets_sqlite_again(self):
@@ -137,7 +137,7 @@ class StartupTests(ParkingFixture):
             self.agent.prepare_startup()
         self.assertFalse(self.agent.startup_ready)
         self.agent.prepare_startup()
-        self.assertEqual(len(self.static.list_space_ids("demo-central")), 8)
+        self.assertEqual(len(self.static.list_space_ids("demo-central")), 20)
 
     def test_dynamic_reset_and_read_failures_stop_startup(self):
         for method, stage in (("reset", "dynamic database reset"), ("list_facts", "baseline context retrieval")):
@@ -366,7 +366,7 @@ class InventoryAndResetTests(ParkingFixture):
         config = replace(self.storage, chroma_collection="another_collection")
         other = StaticParkingStore(config, embeddings=KeywordEmbeddings())
         other.initialize()
-        self.assertEqual(len(other.list_space_ids("demo-central")), 8)
+        self.assertEqual(len(other.list_space_ids("demo-central")), 20)
         self.assertEqual(len(self.static.list_space_ids("north")), 1)
 
     def test_sqlite_reset_recreates_corrupt_file_and_removes_sidecars_only(self):

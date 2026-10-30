@@ -121,6 +121,15 @@ as code are extra-credit artifacts; see the baseline for details.
 - **Deterministic retrieval:** Python retrieves evidence before information answers;
   retrieval is not an LLM-selected tool. Personal reservation details and chats are
   not ingested into either public-information store.
+- **Approved privacy slice:** local presidio-analyzer and a pinned spaCy English model
+  are approved dependencies. Necessary reservation details may still reach Azure/DIAL
+  extraction; unrelated detected sensitive data is filtered. General-answer history
+  and model outputs are sanitized; own-draft summaries remain code-generated. Studio,
+  checkpoints and debug/state APIs remain trusted local development surfaces, not a
+  multi-user authorization boundary. Do not claim complete confidentiality.
+- **Sequential reservations:** multiple spaces in one conversation are separate
+  sequential one-space requests, not one multi-space request. Submission is later work;
+  timing, overlap, refusal/release and cleanup rules still require agreement.
 
 ## Current implementation, not additional requirements
 
@@ -139,7 +148,7 @@ as code are extra-credit artifacts; see the baseline for details.
   go directly to `parking_assitant → END` without retrieval, except incomplete request
   turns mentioning availability/reservation, which retrieve options before replying.
 - Chroma static retrieval and SQLite JSON snapshot CRUD are implemented and graph-wired.
-  Missing/empty Chroma collections are immediately seeded with eight mock spaces at
+  Missing/empty Chroma collections are immediately seeded with 20 mock spaces at
   server startup; populated collections are reused unchanged. SQLite is reset empty
   once per server lifespan. Chat does not seed/reset either database. Default paths
   are project-root `.data/`; SQLite cannot reside inside the persistent Chroma directory.
@@ -166,9 +175,23 @@ as code are extra-credit artifacts; see the baseline for details.
   may be simplified through a separately agreed refactor.
 - Structured extraction defaults to `function_calling`, with explicit `json_schema`
   support. Synthetic live checks timed out; endpoint compatibility remains unverified.
-- Information grounding/general privacy guardrails are still prompt-guided, not fully
-  enforced. Checkpoints/Studio can expose private draft state; do not claim data
-  protection is complete merely because public graph schemas expose only messages.
+- Privacy checks are code-enforced at public ingestion/evidence, model-copy and response
+  boundaries using local Presidio/spaCy plus rules/known values. Imports do not load NLP;
+  startup prepares it before databases. Missing/broken detection fails closed; runtime
+  never downloads models/domain data. General model history excludes message names,
+  arbitrary metadata/system/tool payloads; necessary private extraction remains.
+  `privacy_values` retains thread-local names/vehicle identifiers for filtering history
+  after corrections/cancellation/new drafts. Guarded sync/async `messages` streaming
+  suppresses raw model tokens with `nostream`. Debug/state/task APIs, `astream_events`,
+  traces, raw chats, and checkpoints remain trusted private development data. Unknown/
+  obfuscated identifiers and unfamiliar PII can be missed. Information grounding and
+  prompt-injection defense remain prompt-guided; do not claim complete confidentiality.
+- The 20-record fixture preserves the original eight IDs. Populated Chroma collections
+  remain unchanged at startup; README documents a one-time explicit seed upsert. Do not
+  erase static data or silently apply fixture changes.
+- GUARDRAIL_EVALUATION.md and guardrail_evaluation.py provide synthetic local privacy
+  evaluation, not the complete RAG evaluation/report or load tests. Boundary tests
+  cover contamination, detector failure, old drafts and actual guarded streaming.
 - Offline tests cover storage, graph integration, and draft collection. Live model
   accuracy, RAG evaluation/reporting, and required load tests are not complete.
 - All four stages remain incomplete. Submission, administrator communication/decision
@@ -177,14 +200,17 @@ as code are extra-credit artifacts; see the baseline for details.
 ## Next-session handoff
 
 - **Where we stopped:** database startup preparation, bounded semantic availability
-  suggestions, and reservation draft collection are implemented. Studio is working
+  suggestions, reservation draft collection, 20-record fixture, and layered local
+  privacy guards/synthetic evaluation are implemented. Studio was working
   after connecting the required VPN; `/ok`, `/info`, and assistant discovery returned
   HTTP 200. No code/provider change was needed for that connection issue. Do not redo
   the startup implementation or treat Studio connectivity as live-model evaluation.
+  This privacy slice did not run live Azure/DIAL checks or apply the expanded fixture
+  to the existing project collection. Use the documented explicit upsert if needed.
 - **First action:** review the current implementation and remaining work below with
-  the user, then agree on the next implementation slice. No next slice or new workflow
-  details were selected in this session. Completing Stage 1 coverage, privacy guards,
-  and evaluation is an available next step, not a newly imposed implementation order.
+  the user, then agree on the next implementation slice. No next hold/administrator
+  slice or its detailed rules have been selected. Completing Stage 1 information
+  coverage and live RAG evaluation remains available, not a newly imposed order.
 - **Before the reservation/administrator slice:** settle space selection/submission
   timing, period-overlap eligibility, refusal handling, on-demand validation/cleanup,
   and administrator communication channel. Then implement the agreed SQLite hold
@@ -202,7 +228,9 @@ as code are extra-credit artifacts; see the baseline for details.
 
 ## Remaining decisions and work
 
-- Complete Stage 1 information coverage, required guardrails, and evaluation.
+- Complete Stage 1 information coverage and live RAG evaluation/report. Broaden privacy
+  evaluation as needed; the synthetic detector report is not complete confidentiality,
+  authorization, or live-model correctness.
 - Choose the administrator communication channel and simple approval/refusal workflow.
 - Choose MCP implementation (or permitted fallback), output-file layout and retry
   behavior, and the practical access protection needed by the recording service.
@@ -229,4 +257,5 @@ as code are extra-credit artifacts; see the baseline for details.
   Keep persistent project/collaboration instructions in `AGENTS.md`; do not recreate
   a separate memory instruction file.
 - Setup, commands, and behavior: README.md. Implemented data fields: PARKING_DATA_MODEL.md.
+  Synthetic privacy results/limits: GUARDRAIL_EVALUATION.md.
   Code style: pyproject.toml. Retain the MIT LICENSE and existing copyright notices.

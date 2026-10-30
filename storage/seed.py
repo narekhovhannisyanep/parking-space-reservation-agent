@@ -6,6 +6,7 @@ from pathlib import Path
 
 from langchain_core.documents import Document
 
+from guardrails import PrivacyGuard
 from storage.config import StorageConfig
 from storage.spaces import ParkingSpace
 from storage.static import StaticParkingStore
@@ -16,8 +17,8 @@ DEFAULT_SEED_FILE = Path(__file__).with_name("parking_spaces.json")
 def load_spaces(path: Path = DEFAULT_SEED_FILE) -> list[ParkingSpace]:
     """Load structured space records; reject the entire invalid batch before ingestion.
 
-    Validation checks structure, not PII or source authenticity. Custom files must be
-    reviewed by a trusted operator; never use chat or reservation exports as input.
+    Custom files must be reviewed by a trusted operator; never use chat or reservation
+    exports. The ingestion/CLI privacy check supplements structure/source review.
     """
     records = json.loads(path.read_text(encoding="utf-8"))
     if not isinstance(records, list) or not records:
@@ -46,6 +47,9 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     try:
         documents = load_documents(args.file)
+        guard = PrivacyGuard()
+        for document in documents:
+            guard.check_document(document)
         locations = ", ".join(sorted({document.metadata["location_id"] for document in documents}))
         if args.dry_run:
             print(f"Validated {len(documents)} parking spaces for: {locations}. No data written.")

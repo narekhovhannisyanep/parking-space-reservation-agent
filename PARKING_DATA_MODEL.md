@@ -16,7 +16,7 @@ adding production-grade parking management or speculative future-proofing.
 
 ## Static inventory (implemented)
 
-`storage/parking_spaces.json` contains eight mock spaces at fictional `demo-central`.
+`storage/parking_spaces.json` contains 20 mock spaces at fictional `demo-central`.
 Each record requires exactly these fields:
 
 | Field | Purpose |
@@ -31,6 +31,10 @@ Current validation requires trimmed, nonblank strings. IDs contain 1–64
 alphanumeric/dash/underscore characters and start alphanumerically. Description is
 limited to 400 characters; label/source to 200. Unknown fields are rejected; this
 does not itself detect sensitive content in allowed text fields.
+
+Ingestion additionally rejects detected PII/secrets before embedding; selected
+existing evidence is checked before graph/model use. Local privacy checks supplement
+schema validation and operator review, not prove source safety.
 
 `ParkingSpace` generates LangChain documents with IDs `{location_id}:space:{space_id}`.
 Metadata contains the fields except description, plus `record_type=parking_space`
@@ -90,7 +94,12 @@ Corrections/clears invalidate confirmation. See README for commands and date for
 `ready` means user-confirmed details, **not submission or administrator approval**.
 Personal fields are not written to Chroma or public SQLite snapshots. They are
 present in model inputs and private graph checkpoints; Studio can display them.
-Substring checks and prompt instructions do not complete the required privacy guards.
+Necessary details reach extraction, while detected unrelated PII is filtered and
+updates are grounded in sanitized text. General-answer history/model outputs are
+sanitized. Thread `privacy_values` retains collected names/vehicle identifiers to
+filter historical mentions after corrections/cancellation/new drafts. This is not
+deletion or access control. See README and GUARDRAIL_EVALUATION.md for local detection,
+streaming, provider, checkpoint, and language limitations.
 
 ## Administrator approval and recording (not implemented)
 
@@ -120,3 +129,9 @@ Pending-request holds are selected for the later flow, before human review. Hold
 timing, overlap eligibility, refusal handling, and on-demand validation/cleanup still
 need agreement; no timers/background cleanup or reservation ledger is implemented here.
 Communication channel and MCP implementation (or permitted fallback) remain open.
+
+The user selected separate sequential one-space requests in one thread, not a single
+multi-space request. The eventual SQLite ledger must account for that thread's earlier
+blocking requests as well as other threads' requests. Atomic eligibility-check/hold
+transactions, request-ID idempotency and half-open periods are recommendations for
+later implementation; timing/overlap/refusal/release rules are not yet agreed.

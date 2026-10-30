@@ -18,7 +18,7 @@ reliability, evaluation, and testing remain part of the assignment.
 
 | Stage | Implemented | Still needed |
 | --- | --- | --- |
-| 1: RAG/chatbot | Startup-ready Chroma/SQLite stores, graph-wired retrieval, three semantic eligibility-filtered options, draft collection/validation/user confirmation | Complete parking-information data, required guardrails/filtering, live accuracy checks, performance evaluation/report |
+| 1: RAG/chatbot | Startup-ready Chroma/SQLite stores, 20-record fixture, graph-wired retrieval, three semantic eligibility-filtered options, draft collection/validation/user confirmation, layered local privacy guards and synthetic guardrail evaluation | Complete parking-information data, broader privacy/accuracy evaluation, live accuracy checks, RAG performance evaluation/report |
 | 2: Human approval | Two-agent approach selected | Administrator agent, communication channel, request escalation, approval/refusal handling |
 | 3: Approved recording | File format and Python-owned recording responsibility selected | MCP service (or permitted fallback), access protection, approved-only file writes |
 | 4: Orchestration | Conversation graph and offline integration tests | Complete approval/recording pipeline, end-to-end/load tests, completed usage/deployment documentation |
@@ -34,6 +34,12 @@ Use Python 3.12 or newer. Install the locked dependencies:
 ```bash
 uv sync --dev
 ```
+
+This also installs the pinned local `en_core_web_sm` English NLP model and
+`presidio-analyzer`. Imports do not load NLP. Missing/broken privacy setup stops
+startup; detection never downloads models or domain lists at runtime. The small CPU
+model is supplemented by deterministic checks, not a comprehensive multilingual
+detector. See [GUARDRAIL_EVALUATION.md](GUARDRAIL_EVALUATION.md).
 
 Create a project-root `.env` from `.env.example`. Set:
 
@@ -98,6 +104,7 @@ add a separate public API or UI. Startup waits for both databases and baseline e
 | `commons/constants.py` | Current model constants and user-facing system prompt |
 | `context_augmentation.py` | Public-information retrieval and model-only evidence augmentation |
 | `reservation_collection.py` | Draft extraction, validation, user confirmation, and cancellation |
+| `guardrails.py`, `guardrail_evaluation.py` | Local privacy boundary checks and reproducible synthetic evaluation |
 | `storage/` | Chroma static inventory, SQLite dynamic facts, configuration, and explicit seeding |
 | `tests/` | Offline storage, graph, collection, and opt-in live-model checks |
 
@@ -160,7 +167,7 @@ location/type/schema scope before semantic ranking.
 The internal `search(..., eligible_ids=...)` constraint also limits ranking to the
 document IDs Python has deemed eligible; it never changes that mandatory scope.
 
-`storage/parking_spaces.json` contains eight mock spaces for `demo-central`, differing
+`storage/parking_spaces.json` contains 20 mock spaces for `demo-central`, differing
 by identity and public directions. Every space fits any vehicle by project assumption;
 no dimensions, vehicle categories, or facility-feature matching are modeled.
 The fixture is not complete data for all required general parking/location questions.
@@ -189,6 +196,13 @@ Repeated upserts update the same IDs; unrelated IDs are preserved. Omitted recor
 are not deleted automatically. SQLite is untouched. The agreed demo uses the bundled
 mock fixture without implementing static-data-change or approval logic. The explicit
 seed CLI remains an operator API; startup never updates a populated collection.
+
+**Expanding an existing eight-record demo:** stop the server, connect the VPN needed
+by the embedding provider, run `uv run --env-file .env python -m storage.seed` once,
+then restart. This preserves the original eight IDs and adds twelve records. Do not
+delete Chroma or change collection/schema for this expansion. Editing the fixture
+alone will not expand a populated collection. Unrelated IDs are preserved, so an
+operator-maintained collection need not contain exactly 20.
 
 **Existing database compatibility:** the current schema is version 2 and the default
 collection is `parking_spaces_v2`. If `.env` selects an older collection, select a
@@ -249,7 +263,8 @@ exhaustive inventory or allocation. Async storage runs off the event loop.
 Current defaults: location `demo-central`, K=3, inspected user text=2,000 characters,
 evidence=12,000 characters. `ContextConfig` holds these settings. Fixed queries narrow
 free-form retrieval; follow-up rewriting and user-text exact-ID extraction are not
-implemented. Model instructions are not enforced output grounding or complete privacy guards.
+implemented. Model instructions are not enforced output grounding. Layered privacy
+checks are implemented below, with documented detection limits.
 
 ### Storage settings
 
@@ -315,15 +330,48 @@ LANGSMITH_TRACING=false LANGCHAIN_TRACING_V2=false PARKING_LIVE_TEST=1 \
 
 ## Required data protection and recording safety
 
-Stage 1 requires sensitive-data guardrails/filtering; Stage 3 requires a secure,
-reliable recording service resistant to unauthorized access. They remain unfinished,
-not optional, but do not imply building a production security platform.
+Stage 1 privacy filtering now uses local Presidio/spaCy detection plus deterministic
+credential patterns, known draft values, and labeled-value checks:
+
+- Public static batches and dynamic JSON are checked before embeddings/writes.
+  Unsafe batches are rejected entirely. Schema validation and trusted source review
+  remain necessary; detection cannot identify every private value.
+- Selected startup/turn evidence is checked before entering graph context/model
+  prompts. Contaminated existing records cause safe failure, not automatic rewriting
+  or collection-wide scanning. The static-reuse rule is unchanged.
+- Necessary names, vehicle identifier, and period still reach reservation extraction.
+  Other detected sensitive data is replaced by offset-preserving spaces. Extracted
+  updates must be verbatim in sanitized text, so removed values cannot become draft
+  fields. Conflicting required values need clarification.
+  PERSON spans are permitted for name extraction; this local filter cannot reliably
+  distinguish unrelated names in that same message. Do not include unrelated names.
+- General-answer calls use sanitized, text-only history copies, excluding message
+  names, arbitrary metadata and caller-supplied system/tool messages. Collected draft
+  names/vehicle identifiers stay in internal thread `privacy_values` for filtering
+  later turns, even after corrections, `/cancel`, or `/new`. Neither command deletes
+  chat/checkpoint history. Code-generated own-draft summaries remain visible.
+- Generated responses are inspected and stripped of arbitrary model metadata/tool
+  payloads. Failed checks return a fixed safe response. Unsupported non-text payloads
+  are rejected rather than forwarded without inspection.
+- Model calls use `nostream`: raw extraction/answer tokens are not emitted in the
+  LangGraph `messages` stream before filtering. The final guarded response is emitted.
+  This does not filter trusted debug/state/task APIs, `astream_events`, or traces.
+
+English PERSON/common-PII detection, explicit secret patterns, and known values are
+not complete confidentiality or prompt-injection protection. Locations/dates and
+public prices are not blanket-redacted. Narrow structural rules avoid false positives
+on generated space labels, technical numeric IDs, and currency amounts. Arbitrary
+unlabeled vehicle identifiers and unfamiliar/obfuscated PII can be missed. See
+[GUARDRAIL_EVALUATION.md](GUARDRAIL_EVALUATION.md) for results and limitations.
+
+Stage 3 recording-service security/reliability remains unimplemented and required,
+not a reason to build a production security platform.
 
 Do not put secrets in chat. Inputs go to the configured model provider. Studio and
 checkpoints expose private draft state; public schemas containing only messages do
 not remove that data. The `.env.example` template disables tracing; existing `.env`
 values are not changed. Enabled tracing can also store inputs/responses in LangSmith.
-Metadata validation and location filtering are not sensitive-content detection.
+Filtering model copies does not sanitize stored chats or hide checkpoint state.
 Keep the local development server bound to localhost while testing.
 
 The future recording service must receive real human approval, not model-generated
@@ -334,25 +382,32 @@ approval and successful writing are separate results.
 ## Verification
 
 Run the offline suite (temporary databases and deterministic embeddings, no API calls;
+the installed local NLP model is used, with injected detectors for boundary tests;
 live tests are skipped unless explicitly enabled):
 
 ```bash
 .venv/bin/python -m unittest discover -s tests -v
 ```
 
+Run the synthetic privacy evaluation with `.venv/bin/python -m guardrail_evaluation`.
+It prints case IDs/counts, coverage metrics, and warm detector latency; no files are
+written. It does not replace the still-required live RAG evaluation or load tests.
+
 Coverage includes Chroma/SQLite CRUD and persistence, validation/isolation/concurrency,
 startup seeding/static reuse, SQLite reset/failure propagation, real Starlette lifespan,
 eligibility-constrained semantic ranking/query privacy/thread isolation, context refresh/budgets/message preservation,
 sync/async execution, and draft
-collection/confirmation/timezone handling. It does not establish live model accuracy,
-complete privacy enforcement, or completion of the assignment's evaluation/load tests.
+collection/confirmation/timezone handling, public PII rejection, extraction redaction,
+old-draft filtering, local-model readiness, and guarded sync/async streaming. It does
+not establish live model accuracy, complete privacy enforcement, or completion of
+the assignment's RAG evaluation/load tests.
 
 Source checks:
 
 ```bash
 uv tool run ty check
-uv tool run ruff check app.py parking_agent.py reservation_collection.py context_augmentation.py commons storage tests
-uv tool run ruff format --check app.py parking_agent.py reservation_collection.py context_augmentation.py commons storage tests
+uv tool run ruff check app.py parking_agent.py guardrails.py guardrail_evaluation.py reservation_collection.py context_augmentation.py commons storage tests
+uv tool run ruff format --check app.py parking_agent.py guardrails.py guardrail_evaluation.py reservation_collection.py context_augmentation.py commons storage tests
 ```
 
 ## Next steps
@@ -362,6 +417,15 @@ channel, MCP implementation/output location, and the simple allocation/approval 
 when working on those steps. Pending request holds are selected for the later flow;
 timing, overlap rules, refusal handling, and on-demand validation/cleanup still need
 agreement. Do not build expiry timers, scaling, or production infrastructure speculatively.
+
+Multiple bookings in one thread are selected as separate sequential one-space
+requests, not one multi-space request. Submission is not implemented. The recommended
+later protection is a short SQLite write transaction that rechecks period eligibility
+and inserts a pending hold atomically, with request-ID idempotency. Earlier holds
+from the same thread block overlaps just like other threads' holds. Refresh options
+after conflicts; never hold transactions open for embeddings, LLM calls, or human
+review. Half-open periods `[start, end)` are recommended, not an agreed implemented
+overlap rule. Holds/release/refusal timing still need agreement.
 
 ## References
 

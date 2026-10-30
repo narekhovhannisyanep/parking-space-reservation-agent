@@ -16,7 +16,7 @@ from test_static_storage import KeywordEmbeddings, document
 from storage import ParkingSpace, SpaceFilters, StaticParkingStore, StorageConfig
 from storage.seed import DEFAULT_SEED_FILE, load_documents, load_spaces, main
 
-EXPECTED_SEED_COUNT = 8
+EXPECTED_SEED_COUNT = 20
 
 
 class StaticSeedTests(unittest.TestCase):
@@ -30,7 +30,7 @@ class StaticSeedTests(unittest.TestCase):
         path.write_text(json.dumps(records), encoding="utf-8")
         return path
 
-    def test_default_fixture_has_eight_unique_spaces_and_no_workflow_records(self):
+    def test_default_fixture_has_twenty_unique_spaces_and_no_workflow_records(self):
         documents = load_documents()
         self.assertEqual(len(documents), EXPECTED_SEED_COUNT)
         self.assertEqual(len({doc.id for doc in documents}), EXPECTED_SEED_COUNT)

@@ -6,12 +6,14 @@ readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
     "chromadb>=1.5.9",
+    "en-core-web-sm",
     "langchain>=1.4.6",
     "langchain-chroma>=1.1.0",
     "langchain-openai>=1.7.2",
     "langgraph>=1.2.16",
     "langsmith>=0.14.11",
     "notebook>=7.6.3",
+    "presidio-analyzer>=2.2.366",
     "python-dotenv>=1.2.4",
     "starlette>=1.10.0",
 ]
@@ -31,6 +33,9 @@ unfixable = ["F401"]
 
 [tool.ty]
 environment.python = ".venv"
+
+[tool.uv.sources]
+en-core-web-sm = { url = "https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.8.0/en_core_web_sm-3.8.0-py3-none-any.whl" }
 
 [dependency-groups]
 dev = [

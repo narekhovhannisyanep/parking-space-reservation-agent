@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from langchain_core.documents import Document
 from langchain_core.messages import AnyMessage, BaseMessage, HumanMessage, SystemMessage
 
+from guardrails import PrivacyGuard
 from storage import DynamicParkingStore, ParkingSpace, SpaceFilters, StaticParkingStore
 from storage.dynamic import DynamicFact, JSONValue
 
@@ -106,6 +107,7 @@ def retrieve_context(
     config: ContextConfig,
     *,
     baseline_documents: Sequence[Document] | None = None,
+    privacy_guard: PrivacyGuard | None = None,
 ) -> str:
     """Read scoped evidence every turn; no LLM routing, ingestion, or prose rewriting.
 
@@ -140,14 +142,20 @@ def retrieve_context(
     except (OSError, sqlite3.Error):
         raise RuntimeError("Unable to retrieve parking information. Check storage configuration or retry.") from None
 
-    return render_context(documents, facts, config, availability=availability)
+    return render_context(documents, facts, config, availability=availability, privacy_guard=privacy_guard)
 
 
 def render_context(
-    documents: Sequence[Document], facts: Sequence[DynamicFact], config: ContextConfig, *, availability: bool = False
+    documents: Sequence[Document],
+    facts: Sequence[DynamicFact],
+    config: ContextConfig,
+    *,
+    availability: bool = False,
+    privacy_guard: PrivacyGuard | None = None,
 ) -> str:
     """Render bounded, whole-record evidence for startup or a conversation turn."""
 
+    guard = privacy_guard if privacy_guard is not None else PrivacyGuard()
     dynamic: dict[str, JSONValue] = {
         kind: {"status": "missing"} for kind in ("working_hours", "prices", "availability")
     }
@@ -170,6 +178,7 @@ def render_context(
     for fact in scoped_facts:
         dynamic[fact.kind] = {"status": "omitted_budget"}
     for fact in scoped_facts:
+        guard.check_public(fact.value)
         previous = dynamic[fact.kind]
         dynamic[fact.kind] = {"status": "snapshot", "value": fact.value, "updated_at": fact.updated_at.isoformat()}
         if len(render()) > config.max_context_chars:
@@ -177,6 +186,7 @@ def render_context(
 
     for document in scoped_documents[: config.retrieval_k]:
         ParkingSpace.validate_document(document)
+        guard.check_document(document)
         spaces.append(
             {
                 "document_id": document.id,

@@ -37,6 +37,7 @@ from context_augmentation import (
     render_context,
     retrieve_context,
 )
+from guardrails import SAFE_REPLY, GuardrailError, PrivacyGuard, guarded_model_config
 from reservation_collection import (
     EXTRACTION_FAILURE,
     ReservationExtraction,
@@ -68,6 +69,7 @@ class ParkingState(ParkingMessages):
     reservation: dict = field(default_factory=dict)
     reservation_reply: str = ""
     offered_space_ids: list[str] = field(default_factory=list)
+    privacy_values: list[str] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -125,6 +127,7 @@ class ParkingSpaceReservationAgent:
         reservation_extractor: Runnable | None = None,
         clock: Callable[[], datetime] | None = None,
         require_startup: bool = False,
+        privacy_guard: PrivacyGuard | None = None,
     ) -> None:
         self.config = config if config is not None else AgentConfig.from_environment()
         self._llm_client = llm_client
@@ -136,10 +139,17 @@ class ParkingSpaceReservationAgent:
         self.startup_ready = False
         self.baseline_context = ""
         self._baseline_documents: list[Document] | None = None
+        self.privacy_guard = privacy_guard if privacy_guard is not None else PrivacyGuard()
         self.static_store = (
-            static_store if static_store is not None else StaticParkingStore(self.config.storage, embeddings=embeddings)
+            static_store
+            if static_store is not None
+            else StaticParkingStore(self.config.storage, embeddings=embeddings, privacy_guard=self.privacy_guard)
         )
-        self.dynamic_store = dynamic_store if dynamic_store is not None else DynamicParkingStore(self.config.storage)
+        self.dynamic_store = (
+            dynamic_store
+            if dynamic_store is not None
+            else DynamicParkingStore(self.config.storage, privacy_guard=self.privacy_guard)
+        )
         self.graph = self._build_graph(checkpointer)
 
     def prepare_startup(self) -> None:
@@ -147,8 +157,10 @@ class ParkingSpaceReservationAgent:
         with self._startup_lock:
             if self.startup_ready:
                 return
-            stage = "static database initialization/seeding"
+            stage = "local privacy model preparation"
             try:
+                self.privacy_guard.prepare()
+                stage = "static database initialization/seeding"
                 self.static_store.initialize()
                 stage = "dynamic database reset"
                 self.dynamic_store.reset()
@@ -160,7 +172,7 @@ class ParkingSpaceReservationAgent:
                     ids[: min(3, self.config.context.retrieval_k)], location_id=self.config.context.location_id
                 )
                 facts = self.dynamic_store.list_facts(self.config.context.location_id)
-                context = render_context(documents, facts, self.config.context)
+                context = render_context(documents, facts, self.config.context, privacy_guard=self.privacy_guard)
                 if not json.loads(context.removeprefix(CONTEXT_HEADER))["static_spaces"]:
                     raise ValueError("No baseline evidence fits the configured context budget.")
             except (OSError, ValueError, RuntimeError, sqlite3.Error, ChromaError, OpenAIError):
@@ -168,7 +180,7 @@ class ParkingSpaceReservationAgent:
                 # Do not expose raw provider exceptions, paths, or credentials.
                 raise RuntimeError(
                     f"Parking startup failed during {stage}. Check storage paths, embedding configuration, "
-                    "seed data, and PARKING_LOCATION_ID before restarting."
+                    "seed data, local privacy model installation, and PARKING_LOCATION_ID before restarting."
                 ) from None
             self._baseline_documents = documents
             self.baseline_context = context
@@ -217,7 +229,22 @@ class ParkingSpaceReservationAgent:
 
     def _collection_input(self, state: ParkingState) -> str:
         index = latest_user_index(state.messages)
-        return state.messages[index].text if index is not None else ""
+        return self.privacy_guard.text_content(state.messages[index]) if index is not None else ""
+
+    def _private_values(self, state: ParkingState) -> list[str]:
+        draft = self._reservation_session(state).draft
+        return list(
+            dict.fromkeys(
+                [
+                    *state.privacy_values,
+                    *[value for value in (draft.first_name, draft.surname, draft.car_number) if value],
+                ]
+            )
+        )
+
+    def _guardrail_failure(self, state: ParkingState) -> dict:
+        updates = self._collection_result(state, "", None)
+        return {**updates, "reservation_reply": SAFE_REPLY, "offered_space_ids": []}
 
     def _reservation_session(self, state: ParkingState) -> ReservationSession:
         # Plain JSON checkpoint state avoids deserializing unregistered custom Python types.
@@ -249,6 +276,18 @@ class ParkingSpaceReservationAgent:
             "reservation": session.model_dump(mode="json"),
             "reservation_reply": reply,
             "retrieval_context": "",
+            "privacy_values": list(
+                dict.fromkeys(
+                    [
+                        *self._private_values(state),
+                        *[
+                            value
+                            for value in (session.draft.first_name, session.draft.surname, session.draft.car_number)
+                            if value
+                        ],
+                    ]
+                )
+            ),
         }
         if text.strip() in {"/cancel", "/new"}:
             updates["offered_space_ids"] = []
@@ -256,36 +295,52 @@ class ParkingSpaceReservationAgent:
 
     def _reservation_collection(self, state: ParkingState, config: RunnableConfig) -> dict:
         self._check_startup()
-        text = self._collection_input(state)
+        try:
+            text = self._collection_input(state)
+            safe_text = self.privacy_guard.redact(text, keep_names=True)
+        except GuardrailError:
+            return self._guardrail_failure(state)
         if not text.strip():
             return {"reservation_reply": ""}
+        if not safe_text.strip():
+            return self._guardrail_failure(state)
         if is_collection_control(text):
             return self._collection_result(state, text, ReservationExtraction())
         extractor = self._get_reservation_extractor()
         try:
-            result = extractor.invoke(extraction_messages(self._reservation_session(state), text), config=config)
+            result = extractor.invoke(
+                extraction_messages(self._reservation_session(state), safe_text), config=guarded_model_config(config)
+            )
         except (APIError, ValidationError, OutputParserException):
             return self._collection_result(state, text, None)
-        return self._collection_result(state, text, result)
+        return self._collection_result(state, safe_text, result)
 
     async def _areservation_collection(self, state: ParkingState, config: RunnableConfig) -> dict:
         self._check_startup()
-        text = self._collection_input(state)
+        try:
+            text = self._collection_input(state)
+            safe_text = await asyncio.to_thread(self.privacy_guard.redact, text, keep_names=True)
+        except GuardrailError:
+            return self._guardrail_failure(state)
         if not text.strip():
             return {"reservation_reply": ""}
+        if not safe_text.strip():
+            return self._guardrail_failure(state)
         if is_collection_control(text):
             return self._collection_result(state, text, ReservationExtraction())
         extractor = await asyncio.to_thread(self._get_reservation_extractor)
         try:
-            result = await extractor.ainvoke(extraction_messages(self._reservation_session(state), text), config=config)
+            result = await extractor.ainvoke(
+                extraction_messages(self._reservation_session(state), safe_text), config=guarded_model_config(config)
+            )
         except (APIError, ValidationError, OutputParserException):
             return self._collection_result(state, text, None)
-        return self._collection_result(state, text, result)
+        return self._collection_result(state, safe_text, result)
 
     def _route_collection(self, state: ParkingState) -> Literal["context_augmentation", "parking_assitant"]:
         if (
             state.reservation_reply
-            and state.reservation_reply != EXTRACTION_FAILURE
+            and state.reservation_reply not in {EXTRACTION_FAILURE, SAFE_REPLY}
             and self._reservation_session(state).status == "collecting"
             and asks_availability(state.messages, self.config.context)
         ):
@@ -311,13 +366,17 @@ class ParkingSpaceReservationAgent:
         return updates
 
     def _context_augmentation(self, state: ParkingState) -> dict:
-        context = retrieve_context(
-            state.messages,
-            self.static_store,
-            self.dynamic_store,
-            self.config.context,
-            baseline_documents=self._baseline_documents,
-        )
+        try:
+            context = retrieve_context(
+                state.messages,
+                self.static_store,
+                self.dynamic_store,
+                self.config.context,
+                baseline_documents=self._baseline_documents,
+                privacy_guard=self.privacy_guard,
+            )
+        except GuardrailError:
+            return self._guardrail_failure(state)
         updates: dict = {"retrieval_context": context}
         options = offered_space_ids(context)
         if options is not None:
@@ -332,24 +391,35 @@ class ParkingSpaceReservationAgent:
         if state.reservation_reply:
             return self._collection_response(state)
         model = self._get_llm_client()
-        messages = augmented_messages(self.config.system_prompt, state.messages, state.retrieval_context)
         try:
-            response = model.invoke(messages, config=config)
+            history = self.privacy_guard.public_messages(state.messages, self._private_values(state))
+            messages = augmented_messages(self.config.system_prompt, history, state.retrieval_context)
+        except GuardrailError:
+            return self._collection_response(ParkingState(reservation_reply=SAFE_REPLY))
+        try:
+            response = model.invoke(messages, config=guarded_model_config(config))
         except APIError:
             # Avoid including raw provider errors in the graph's user-facing error.
             raise RuntimeError("Unable to get a response. Check the model configuration or retry the run.") from None
-        return {"messages": [response]}
+        return {"messages": [self.privacy_guard.response(response, self._private_values(state))]}
 
     async def _aparking_assitant(self, state: ParkingState, config: RunnableConfig) -> dict:
         if state.reservation_reply:
             return self._collection_response(state)
         # Client construction can block; model requests use the native async API.
         model = await asyncio.to_thread(self._get_llm_client)
-        messages = augmented_messages(self.config.system_prompt, state.messages, state.retrieval_context)
         try:
-            response = await model.ainvoke(messages, config=config)
+            history = await asyncio.to_thread(
+                self.privacy_guard.public_messages, state.messages, self._private_values(state)
+            )
+            messages = augmented_messages(self.config.system_prompt, history, state.retrieval_context)
+        except GuardrailError:
+            return self._collection_response(ParkingState(reservation_reply=SAFE_REPLY))
+        try:
+            response = await model.ainvoke(messages, config=guarded_model_config(config))
         except APIError:
             raise RuntimeError("Unable to get a response. Check the model configuration or retry the run.") from None
+        response = await asyncio.to_thread(self.privacy_guard.response, response, self._private_values(state))
         return {"messages": [response]}
 
     def _build_graph(self, checkpointer: BaseCheckpointSaver | None) -> CompiledStateGraph:
