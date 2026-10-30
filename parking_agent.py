@@ -26,7 +26,7 @@ from langgraph.graph.state import CompiledStateGraph
 from openai import APIError, OpenAIError
 from pydantic import ValidationError
 
-from commons.constants import DIAL_GPT_LUNA_6, SYSTEM_PROMPT
+from commons.constants import DIAL_GPT_SOL_6_1, SYSTEM_PROMPT
 from context_augmentation import (
     CONTEXT_HEADER,
     ContextConfig,
@@ -76,7 +76,7 @@ class ParkingState(ParkingMessages):
 class AgentConfig:
     """Shared, non-secret settings for one agent instance."""
 
-    deployment: str = DIAL_GPT_LUNA_6
+    deployment: str = DIAL_GPT_SOL_6_1
     system_prompt: str = SYSTEM_PROMPT
     reasoning_effort: Literal["low", "medium", "high"] = "medium"
     temperature: float = 0
@@ -94,7 +94,7 @@ class AgentConfig:
     def from_environment(cls) -> "AgentConfig":
         """Read settings after LangGraph CLI has loaded the configured environment."""
         return cls(
-            deployment=os.getenv("AZURE_OPENAI_DEPLOYMENT") or DIAL_GPT_LUNA_6,
+            deployment=os.getenv("AZURE_OPENAI_DEPLOYMENT") or DIAL_GPT_SOL_6_1,
             extraction_method=_extraction_method_from_environment(),
             storage=StorageConfig.from_environment(),
             context=ContextConfig(location_id=os.getenv("PARKING_LOCATION_ID") or "demo-central"),

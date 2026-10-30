@@ -14,7 +14,7 @@ from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.errors import NodeCancelledError
 from openai import APIError, OpenAIError
 
-from commons.constants import DIAL_GPT_LUNA_6
+from commons.constants import DIAL_GPT_SOL_6_1
 from parking_agent import AgentConfig, ParkingSpaceReservationAgent, ParkingState
 from reservation_collection import ReservationExtraction
 from storage import StorageConfig
@@ -26,7 +26,7 @@ class ConfigTests(unittest.TestCase):
             with self.subTest(value=value):
                 env = {} if value is None else {"AZURE_OPENAI_DEPLOYMENT": value}
                 with patch.dict(os.environ, env, clear=True):
-                    self.assertEqual(AgentConfig.from_environment().deployment, value or DIAL_GPT_LUNA_6)
+                    self.assertEqual(AgentConfig.from_environment().deployment, value or DIAL_GPT_SOL_6_1)
 
     def test_shared_settings_are_immutable(self):
         config = AgentConfig()
