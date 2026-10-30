@@ -40,5 +40,4 @@ en-core-web-sm = { url = "https://github.com/explosion/spacy-models/releases/dow
 [dependency-groups]
 dev = [
     "langgraph-cli[inmem]>=0.4.38",
-    "langgraph[inmem]>=1.2.16",
 ]
