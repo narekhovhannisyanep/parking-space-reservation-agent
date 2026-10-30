@@ -185,7 +185,7 @@ as code are extra-credit artifacts; see the baseline for details.
   confirmation commands, and cancellation. See README for behavior; these details
   may be simplified through a separately agreed refactor.
 - Structured extraction defaults to `function_calling`, with explicit `json_schema`
-  support. Synthetic live checks timed out; endpoint compatibility remains unverified.
+  support. Opt-in live smoke checks passed with `function_calling` on 2026-10-30.
 - Privacy checks are code-enforced at public ingestion/evidence, model-copy and response
   boundaries using local Presidio/spaCy plus rules/known values. Imports do not load NLP;
   startup prepares it before databases. Missing/broken detection fails closed; runtime

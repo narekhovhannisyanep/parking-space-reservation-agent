@@ -335,8 +335,9 @@ assignment requirements that cannot be reconsidered during refactoring.
 
 `PARKING_EXTRACTION_METHOD` defaults to `function_calling`; `json_schema` is an explicit
 alternative. Actual endpoint support is required; there is no prose-parsing fallback.
-Offline tests do not prove live compatibility. The earlier synthetic endpoint check
-timed out with `OpenAITimeoutError`; live compatibility/accuracy remain unverified.
+Offline tests do not prove live compatibility. On 2026-10-30 both opt-in synthetic
+smoke checks passed with `function_calling` and `gpt-6.1-sol-2026-09-29` (VPN connected).
+Live answer accuracy is measured separately in [RAG_EVALUATION.md](RAG_EVALUATION.md).
 
 Opt-in smoke test (synthetic data, mocked public stores, no tracing):
 

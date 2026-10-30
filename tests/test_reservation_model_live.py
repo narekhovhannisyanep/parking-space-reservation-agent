@@ -89,6 +89,7 @@ class LiveReservationModelTests(unittest.TestCase):
         state = graph.get_state(config).values["reservation"]
         self.assertEqual(state["status"], "awaiting_confirmation")
         self.assertEqual(state["draft"]["surname"], "Example")
-        self.assertEqual(state["request"]["start"], "2030-06-01T06:00:00+00:00")
+        # Compare instants, not Pydantic's UTC serialization ("Z" versus "+00:00").
+        self.assertEqual(datetime.fromisoformat(state["request"]["start"]), datetime(2030, 6, 1, 6, tzinfo=UTC))
         result = self.safely(lambda: graph.invoke({"messages": [("user", f"/confirm {state['revision']}")]}, config))
         self.assertEqual(result["messages"][-1].content, READY_REPLY)
