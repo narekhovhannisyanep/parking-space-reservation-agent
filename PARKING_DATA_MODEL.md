@@ -66,8 +66,8 @@ Availability suggestions use a location-wide boolean snapshot or a space-ID/bool
 map. `False` blocks the applicable space(s); absent snapshots or absent map IDs leave
 the static-available-by-default assumption in effect. Null, counts, string statuses,
 and other unsupported shapes fail selection rather than silently offering spaces.
-This is a public snapshot contract, not a reservation/hold ledger schema. Period-based
-holds, their statuses, and cleanup will be agreed in the subsequent reservation change.
+This is a public snapshot contract, separate from the private Stage 2 ledger below.
+The same SQLite startup reset recreates both tables empty.
 
 Python reads inventory IDs and applies dynamic eligibility before semantic ranking.
 Chroma embeds the fixed public-topic query derived from the latest user message and
@@ -104,13 +104,64 @@ filter historical mentions after corrections/cancellation/new drafts. This is no
 deletion or access control. See README and GUARDRAIL_EVALUATION.md for local detection,
 streaming, provider, checkpoint, and language limitations.
 
-## Administrator approval and recording (not implemented)
+## Private reservation ledger and administrator approval (Stage 2 implemented)
 
-The accepted workflow is collection → human approval/refusal via the second agent
-→ code-controlled recording. Allocation/reservation state and file formatting are
-Python responsibilities. The simplest implementation that fulfills the assignment
-and these accepted choices should be selected when implementing the next stages;
-there is no agreed new reservation-ledger schema in this document.
+`storage/reservations.py` uses a separate `parking_reservations` table in the configured
+SQLite database. Public fact CRUD and RAG evidence never return these records.
+
+| Field | Purpose |
+| --- | --- |
+| `request_id` | Primary key `draft_id:revision`; idempotent submission identity |
+| `thread_id` | Owning graph thread; application lookups/decisions are thread-scoped |
+| `location_id`, `space_id` | Scoped selected inventory space |
+| `request_json` | Private normalized `ValidatedReservationRequest`: names, vehicle identifier, UTC period, timezone and draft identity |
+| `start_at`, `end_at` | Fixed-microsecond UTC timestamps for indexed half-open interval checks |
+| `status` | `pending`, `approved`, `refused`, or `elapsed` |
+| `submitted_at` | UTC hold creation time |
+| `decision_at` | UTC completed review time; null while pending |
+| `approval_time` | UTC human approval time only; null for pending/refused/elapsed |
+
+The table constrains statuses, ordered intervals, and status/timestamp consistency.
+Submission acquires the write lock before reading snapshots or overlapping records,
+then inserts the hold in the same short transaction. No LLM or human review happens
+inside a database transaction. Existing identity retries must match thread, space,
+and request exactly; completed decisions cannot be reversed.
+
+The user confirms details, asks for `/options`, and submits one offered ID with
+`/submit SPACE_ID`. Offers are bound to the current validated UTC period and invalidated
+by date/time/timezone changes. Pending/approved rows block overlaps using `[start, end)`;
+adjacent periods can share a space, including within the same thread. Unknown-period
+suggestions use current observations and exclude only holds active now. Before ranking,
+Python reads only blocked space IDs from the ledger, never private request fields.
+RAG evidence includes `eligibility_scope` and, when applicable, `reservation_period_utc`.
+Suggestions never create holds; submission rechecks static inventory, public overrides,
+future start, and overlapping holds. Conflicts refresh the semantic options.
+
+Internal graph state adds `offer_period`, `refresh_options`, `submission`,
+`administrator_payload`, and `review_retry`. `submission` holds only request identity,
+space, and status; SQLite supplies canonical details on review/replay. The second
+LangChain agent generates bounded neutral review wording from the submitted request.
+Python builds the exact private review payload and displays it through a typed Studio
+interrupt; the human returns `{request_id, decision}` with `approve` or `refuse`.
+Invalid/mismatched values open a fresh interrupt without changing SQLite. The first
+agent reports the code-controlled outcome, not model-generated authority.
+
+Refusal releases the hold; approval retains it and its approval time. Approval arriving
+at/after start becomes `elapsed`, never approved, and releases the hold. Ended periods
+stop blocking on-demand queries without deleting records or running timers. No editing,
+cancellation, or new request is allowed while waiting; `/new` after the decision starts
+a separate one-space request. Earlier approved requests remain authoritative and block
+their overlapping periods. Startup deliberately clears all ledger rows; old graph
+checkpoints cannot recreate a missing submitted request on review.
+
+Studio is the selected **trusted local** review channel, with no out-of-band notification
+or separate administrator authentication. Thread/request matching correlates decisions,
+not proves human identity or secures development APIs. Necessary submitted fields reach
+the configured administrator-composition model and remain visible in private SQLite,
+Studio, checkpoints, and debug data. Public model copies/streams retain the privacy
+boundaries described in README; raw administrator model tokens use `nostream`.
+
+## Approved file recording (Stage 3 not implemented)
 
 Only human-approved reservations may be written as:
 
@@ -128,13 +179,6 @@ The dedicated disposable `.data/approved-reservations/` output directory will be
 dropped/recreated at startup during Stage 3; that cleanup is not implemented yet.
 Approval reversal is out of scope. Output-file layout and retries remain undecided.
 
-Pending-request holds are selected for the later flow, before human review. Hold
-timing, overlap eligibility, refusal handling, and on-demand validation/cleanup still
-need agreement; no timers/background cleanup or reservation ledger is implemented here.
-Communication channel and MCP implementation (or permitted fallback) remain open.
-
-The user selected separate sequential one-space requests in one thread, not a single
-multi-space request. The eventual SQLite ledger must account for that thread's earlier
-blocking requests as well as other threads' requests. Atomic eligibility-check/hold
-transactions, request-ID idempotency and half-open periods are recommendations for
-later implementation; timing/overlap/refusal/release rules are not yet agreed.
+MCP implementation (or the documented permitted fallback), output-file layout, retries,
+and practical access protection remain to be agreed. Full-pipeline integration and load
+tests follow in Stage 4. Stage 2 offline tests are not live-provider/Studio validation.

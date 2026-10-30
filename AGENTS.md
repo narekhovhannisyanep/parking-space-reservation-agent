@@ -24,9 +24,8 @@
 - **New dependencies:** before adding a third-party package, explain what problem it
   solves, why it is needed, and relevant alternatives or trade-offs, then obtain the
   user's approval. Approval of a behavior does not automatically approve a new package.
-- The database-startup/availability-suggestions implementation is deliberately limited
-  to preparation and options. Reservation holds, administrator decisions, and recording
-  are subsequent work; discuss their remaining choices before implementing them.
+- Stage 2 submission/holds/administrator review are now selected and implemented below.
+  Stage 3 recording remains separate; discuss its remaining choices before implementing it.
 
 ## Required outcomes
 
@@ -61,7 +60,7 @@ as code are extra-credit artifacts; see the baseline for details.
   record formatting/writing belong in code, not LLM decisions. Agents collect/clarify
   details and coordinate communication; only the human administrator approves.
   The recording service owns the file format, not the user-facing system prompt.
-  Submission/allocation may be exposed through tools; detailed wiring is not decided.
+  Explicit `/submit SPACE_ID` is code-controlled; agents do not decide allocation.
 - **Static/dynamic split:** retain the selected optional assignment improvement:
   local persistent Chroma for static information and built-in SQLite for dynamic
   hours, prices, and availability. No standalone database server is needed.
@@ -104,11 +103,23 @@ as code are extra-credit artifacts; see the baseline for details.
   choice may be revisited if Stage 3 reveals a concrete need, not hypothetical future
   requirements; do not implement recording or its cleanup in the startup/suggestions
   change.
-- **Later request holds:** a requested space must be recorded in SQLite as held before
-  administrator review, and human approval changes its reservation status. Retain
-  reservation period and approval time. Detailed selection/hold timing, overlap rules,
-  and on-demand validation/cleanup remain to be agreed when implementing this flow;
-  do not invent hold expiry timers or background cleanup infrastructure.
+- **Stage 2 submission/holds:** confirm details, request `/options`, then select one
+  currently offered ID with `/submit SPACE_ID`. Python atomically rechecks public
+  overrides and period overlap and inserts a pending SQLite hold before review.
+  Offers never hold spaces. Half-open UTC periods `[start, end)` allow adjacent bookings;
+  pending/approved rows block overlaps, including earlier requests from the same thread.
+- **Administrator channel:** the user chose Studio review, not REST/email/messenger.
+  The second LangChain agent prepares a bounded review message from canonical submitted
+  details, and Python shows the private facts through a typed LangGraph interrupt.
+  The trusted local human operator resumes with request ID and `approve`/`refuse`.
+  Studio is not a separate authenticated administrator application; no notification,
+  public UI, new service, or new dependency is selected.
+- **Decision lifecycle:** refusal immediately releases the hold; approval retains it
+  and a UTC approval time. No user editing/cancellation or `/new` while awaiting review.
+  Submission rechecks future start; approval at/after start becomes `elapsed`, not
+  approved, and releases the hold. Ended periods stop blocking on demand; no automatic
+  expiry timer/background cleanup. `/new` after a decision starts a separate request.
+  Decision/submission replay is idempotent; approval reversal is out of scope.
 - **Entry point:** LangGraph CLI + LangSmith Studio, not a terminal chat loop.
   No additional public UI or production deployment platform has been requested.
 - **Agent ownership:** `ParkingSpaceReservationAgent` owns configuration, shared clients,
@@ -133,8 +144,7 @@ as code are extra-credit artifacts; see the baseline for details.
   unknown unless supplied through Python CRUD. Requests are free: the user picks one
   of the three offered options, and the administrator approves or refuses it.
 - **Sequential reservations:** multiple spaces in one conversation are separate
-  sequential one-space requests, not one multi-space request. Submission is later work;
-  timing, overlap, refusal/release and cleanup rules still require agreement.
+  sequential one-space requests, not one multi-space request, using `/new` after review.
 
 ## Current implementation, not additional requirements
 
@@ -148,10 +158,12 @@ as code are extra-credit artifacts; see the baseline for details.
   first-time seeding waits on embeddings before serving Studio; a printed CLI URL is
   not proof of readiness. Studio connectivity was restored by connecting the VPN,
   without a code or provider change; this does not establish live-model accuracy.
-- Current graph: `START → reservation_collection`; information turns continue through
-  `context_augmentation → parking_assitant → END`. Deterministic collection replies
-  go directly to `parking_assitant → END` without retrieval, except incomplete request
-  turns mentioning availability/reservation, which retrieve options before replying.
+- Current graph starts with `reservation_collection`; information/options use
+  `context_augmentation → parking_assitant`. Successful submission emits the pending
+  reply, then runs `administrator_agent → administrator_review` (typed Studio interrupt)
+  and returns to `parking_assitant` for the actual outcome. Invalid human values loop
+  to a fresh review interrupt. Model preparation and review are separate checkpointed
+  nodes, so human resume does not regenerate communication or create another hold.
 - Chroma static retrieval and SQLite JSON snapshot CRUD are implemented and graph-wired.
   Missing/empty Chroma collections are immediately seeded with 20 mock spaces at
   server startup; populated collections are reused unchanged. SQLite is reset empty
@@ -178,12 +190,27 @@ as code are extra-credit artifacts; see the baseline for details.
   current round (`offer_round_ids`, code-tracked, never model text) before ranking; a
   fresh request, `/cancel`, or `/new` starts a new round. Blocked spaces are filtered
   before ranking, so fewer than three options appear only when fewer eligible remain. Hours/prices remain unknown when missing. These snapshots do not allocate
-  or confirm availability for a booking period; a future hold ledger is not implemented.
+  or guarantee availability for a booking period. Stage 2 separately reads blocked IDs
+  from the private ledger before ranking for a validated draft period; unknown periods
+  use current observations and exclude only active-now holds. `offer_period` binds
+  offered IDs to their UTC period; date/time/timezone changes invalidate those offers.
 - Draft collection, field validation, and user confirmation are implemented.
   `ValidatedReservationRequest` means collected details, not a submission or approval.
   Current code uses explicit dates/timezones, UTC normalization, draft revisions,
   confirmation commands, and cancellation. See README for behavior; these details
   may be simplified through a separately agreed refactor.
+- Private `storage/reservations.py` owns `parking_reservations` in the same SQLite
+  database/lifecycle as public facts, but public CRUD/RAG never return its personal
+  fields. Statuses are pending/approved/refused/elapsed. Stable `draft_id:revision`
+  identity prevents duplicate/reallocated holds; write locking precedes eligibility
+  reads. Startup clears both tables; old submitted checkpoints report missing requests
+  rather than resurrect them. No Stage 3 file output/cleanup is implemented.
+- `administrator_agent.py` uses its own lazy LangChain structured-output runnable
+  and prompt on the existing Azure/DIAL client. It receives necessary submitted details,
+  not chat history. Python owns payload facts and decisions; unsafe/unparseable wording
+  or API failure uses a fixed review request. Raw administrator tokens use `nostream`.
+  Private payloads, SQLite, checkpoints/debug and Studio remain trusted local data.
+  Typed response/request-ID checks are not administrator authentication.
 - Structured extraction defaults to `function_calling`, with explicit `json_schema`
   support. Opt-in live smoke checks passed with `function_calling` on 2026-10-30.
 - Privacy checks are code-enforced at public ingestion/evidence, model-copy and response
@@ -212,30 +239,23 @@ as code are extra-credit artifacts; see the baseline for details.
   the model) are documented, not tuned, to avoid overfitting the small labeled set.
 - Offline tests cover storage, graph integration, draft collection, retrieval topics
   and evaluation harness. Required load tests are not complete (Stage 4).
-- Stage 1 requirements are implemented; optional retrieval tuning remains possible.
-  Stages 2–4 remain incomplete. Submission, administrator communication/decision
-  handling, allocation, MCP/file recording, and the complete pipeline are not implemented.
+- Stages 1–2 are implemented; optional retrieval tuning remains possible. Stage 2 has
+  offline sync/async interrupt/resume, concurrency, temporal, refusal, reset, replay and
+  actual model-stream boundary tests; its live model/Studio form has not been verified.
+  Stages 3–4 remain incomplete: MCP/file recording and full-pipeline/load tests.
 
 ## Next-session handoff
 
-- **Where we stopped:** database startup preparation, bounded semantic availability
-  suggestions, reservation draft collection, 20-record fixture, and layered local
-  privacy guards/synthetic evaluation, location-term retrieval with "other options"
-  follow-ups, and the RAG evaluation report are implemented. Studio was working
-  after connecting the required VPN; `/ok`, `/info`, and assistant discovery returned
-  HTTP 200. No code/provider change was needed for that connection issue. Do not redo
-  the startup implementation or treat Studio connectivity as live-model evaluation.
-  This privacy slice did not run live Azure/DIAL checks or apply the expanded fixture
-  to the existing project collection. Use the documented explicit upsert if needed.
-- **First action:** review the current implementation and remaining work below with
-  the user, then agree on the next implementation slice. No next hold/administrator
-  slice or its detailed rules have been selected. Stage 1 is complete; optional
-  retrieval tuning should be re-measured with rag_evaluation.py.
-- **Before the reservation/administrator slice:** settle space selection/submission
-  timing, period-overlap eligibility, refusal handling, on-demand validation/cleanup,
-  and administrator communication channel. Then implement the agreed SQLite hold
-  before review and connect the second agent's human decision to Python-controlled
-  state changes. Suggestions must remain non-holding; user confirmation is not approval.
+- **Where we stopped:** Stages 1–2 are implemented, including confirmed details →
+  `/options` → `/submit SPACE_ID` → atomic private SQLite hold → second LangChain
+  communication agent → typed Studio human review → code-controlled outcome reply.
+  README contains the demo and trusted-local limitations. Stage 2 has not been manually
+  demonstrated in Studio or checked with a live administrator model. Earlier VPN/Studio
+  connectivity and Stage 1 evaluation do not establish that validation. No static data
+  or provider change was needed; do not erase/reseed populated Chroma.
+- **First action:** review Stage 2 behavior/tests with the user and agree on the next
+  slice. A manual Studio demo is possible using the required VPN. Do not substitute
+  REST/email/messenger for the selected Studio channel without user agreement.
 - **Before the recording slice:** settle MCP implementation (or documented permitted
   fallback), file layout, retries, and access protection. Then implement approved-only
   recording and dedicated output-directory startup cleanup, preserving SQLite approval
@@ -251,17 +271,15 @@ as code are extra-credit artifacts; see the baseline for details.
 - Optional: tune retrieval weak spots listed in RAG_EVALUATION.md and re-measure.
   Broaden privacy evaluation as needed; the synthetic detector report is not complete confidentiality,
   authorization, or live-model correctness.
-- Choose the administrator communication channel and simple approval/refusal workflow.
 - Choose MCP implementation (or permitted fallback), output-file layout and retry
   behavior, and the practical access protection needed by the recording service.
-- Implement the accepted code-controlled reservation/allocation approach and connect
-  approval to recording. A user acknowledgment is not administrator approval; pending
+- Connect the implemented code-controlled administrator approval to recording.
+  A user acknowledgment is not administrator approval; pending
   or refused requests must not be recorded, and approval alone does not prove a write.
 - Retain startup readiness, static reuse/seeding, SQLite reset, three-option suggestions,
   and their offline tests when implementing subsequent workflow stages.
-- For the later selected hold flow, agree on request timing, interval-based eligibility,
-  administrator refusal handling, and on-demand validation/cleanup. A detailed
-  reservation-ledger architecture is not a prerequisite for startup and suggestions.
+- Optionally verify the Stage 2 model and Studio review form live; preserve its
+  accepted explicit-submit, period, refusal, waiting, reset, and replay rules.
 - Finish integration/load tests and assignment documentation. Do not create a backlog
   of hypothetical production UI, tenancy, scaling, observability, or infrastructure work.
 

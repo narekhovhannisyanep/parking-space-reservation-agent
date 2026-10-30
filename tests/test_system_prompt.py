@@ -9,6 +9,7 @@ from langchain_core.runnables import RunnableLambda
 from commons.constants import SYSTEM_PROMPT
 from parking_agent import ParkingSpaceReservationAgent
 from reservation_collection import ReservationExtraction
+from storage.reservations import ReservationStore
 
 
 class SystemPromptTests(unittest.TestCase):
@@ -57,8 +58,12 @@ class SystemPromptTests(unittest.TestCase):
         model = Mock()
         response = AIMessage(content="Please provide your reservation period.")
         model.invoke.return_value = response
+        ledger = Mock(spec=ReservationStore)
+        ledger.blocked_spaces.return_value = []
         graph = ParkingSpaceReservationAgent(
-            llm_client=model, reservation_extractor=RunnableLambda(lambda _: ReservationExtraction())
+            llm_client=model,
+            reservation_extractor=RunnableLambda(lambda _: ReservationExtraction()),
+            reservation_store=ledger,
         ).graph
 
         for history in ([], [HumanMessage(content="I would like to reserve parking.")]):

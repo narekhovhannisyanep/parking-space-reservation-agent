@@ -22,6 +22,7 @@ from reservation_collection import (
     parse_extraction,
 )
 from storage import DynamicParkingStore, StaticParkingStore
+from storage.reservations import ReservationStore
 
 Result = TypeVar("Result")
 
@@ -40,10 +41,13 @@ class LiveReservationModelTests(unittest.TestCase):
         static.get_spaces.return_value = []
         dynamic = Mock(spec=DynamicParkingStore)
         dynamic.list_facts.return_value = []
+        ledger = Mock(spec=ReservationStore)
+        ledger.blocked_spaces.return_value = []
         self.agent = ParkingSpaceReservationAgent(
             config=replace(AgentConfig.from_environment(), timeout=15, max_retries=0, reasoning_effort="low"),
             static_store=static,
             dynamic_store=dynamic,
+            reservation_store=ledger,
             checkpointer=InMemorySaver(),
             clock=lambda: datetime(2026, 10, 28, tzinfo=UTC),
         )

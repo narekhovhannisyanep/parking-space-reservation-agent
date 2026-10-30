@@ -20,6 +20,7 @@ from parking_agent import ParkingSpaceReservationAgent
 from reservation_collection import FieldUpdate, ReservationExtraction
 from storage import DynamicParkingStore, ParkingSpace, StaticParkingStore, StorageConfig
 from storage.dynamic import DynamicFact
+from storage.reservations import ReservationStore
 from storage.seed import load_documents
 
 
@@ -171,11 +172,14 @@ class GuardGraphTests(unittest.TestCase):
         self.static.list_space_ids.return_value = []
         self.dynamic.list_facts.return_value = []
         self.extraction = Mock(return_value=ReservationExtraction())
+        ledger = Mock(spec=ReservationStore)
+        ledger.blocked_spaces.return_value = []
         self.agent = ParkingSpaceReservationAgent(
             llm_client=self.model,
             reservation_extractor=RunnableLambda(self.extraction),
             static_store=self.static,
             dynamic_store=self.dynamic,
+            reservation_store=ledger,
             privacy_guard=self.guard,
             checkpointer=InMemorySaver(),
             clock=lambda: datetime(2026, 10, 28, tzinfo=UTC),

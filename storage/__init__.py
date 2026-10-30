@@ -1,4 +1,4 @@
-"""Local storage for public parking facts, not conversation or reservation state."""
+"""Public parking storage exports; the private ledger is in storage.reservations."""
 
 from storage.config import StorageConfig
 from storage.dynamic import DynamicFact, DynamicParkingStore

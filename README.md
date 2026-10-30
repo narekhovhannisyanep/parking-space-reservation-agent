@@ -21,13 +21,14 @@ reliability, evaluation, and testing remain part of the assignment.
 | Stage | Implemented | Still needed |
 | --- | --- | --- |
 | 1: RAG/chatbot | Startup-ready Chroma/SQLite stores, 20-record fixture, graph-wired retrieval, three semantic eligibility-filtered options with location-preference terms and "other options" follow-ups, draft collection/validation/user confirmation, layered local privacy guards, synthetic guardrail evaluation, synthetic RAG retrieval/answer/latency evaluation and report | Optional retrieval tuning (see RAG_EVALUATION.md limits) |
-| 2: Human approval | Two-agent approach selected | Administrator agent, communication channel, request escalation, approval/refusal handling |
+| 2: Human approval | Second LangChain communication agent, explicit submission, SQLite period holds, typed Studio review, approval/refusal and user outcome replies; offline integration/race/replay/streaming tests | Manual live-provider/Studio demonstration has not been verified for this slice |
 | 3: Approved recording | File format and Python-owned recording responsibility selected | MCP service (or permitted fallback), access protection, approved-only file writes |
 | 4: Orchestration | Conversation graph and offline integration tests | Complete approval/recording pipeline, end-to-end/load tests, completed usage/deployment documentation |
 
-**The current application cannot complete reservations.** User-confirmed details
-are not administrator approval. Submission, allocation, administrator communication,
-MCP calls, and approved-reservation recording are not implemented.
+**Stages 1–2 are implemented; recording is not.** Confirmed details can be submitted
+for a single offered space, held in SQLite, and approved or refused by a human in
+Studio. User confirmation is not administrator approval; approval is not a successful
+file write. MCP calls and approved-reservation file recording remain Stage 3 work.
 
 ## Setup and run
 
@@ -106,6 +107,8 @@ add a separate public API or UI. Startup waits for both databases and baseline e
 | `commons/constants.py` | Current model constants and user-facing system prompt |
 | `context_augmentation.py` | Public-information retrieval and model-only evidence augmentation |
 | `reservation_collection.py` | Draft extraction, validation, user confirmation, and cancellation |
+| `administrator_agent.py` | Second LangChain agent: bounded review wording and strict human-decision schema |
+| `storage/reservations.py` | Private SQLite hold ledger, atomic overlap checks, approval/refusal and timestamps |
 | `guardrails.py`, `guardrail_evaluation.py` | Local privacy boundary checks and reproducible synthetic evaluation |
 | `storage/` | Chroma static inventory, SQLite dynamic facts, configuration, and explicit seeding |
 | `tests/` | Offline storage, graph, collection, and opt-in live-model checks |
@@ -117,6 +120,9 @@ START → reservation_collection
   information turn → context_augmentation → parking_assitant → END
   incomplete request mentioning availability/reservation → context_augmentation → parking_assitant → END
   collection reply → parking_assitant → END
+  successful /submit → parking_assitant (pending reply) → administrator_agent
+    → administrator_review (Studio interrupt) → parking_assitant (outcome) → END
+  invalid administrator response → administrator_review (fresh interrupt)
 ```
 
 `parking_assitant` retains the user-selected spelling. The accepted complete
@@ -146,7 +152,8 @@ At each application-server startup:
    if the collection is missing or empty. Reuse populated collections unchanged;
    do not compare timestamps, fixture contents, or freshness.
 2. Recreate the configured SQLite file and schema empty, removing its old SQLite
-   sidecars as well. This intentionally discards all dynamic facts from previous runs.
+   sidecars as well. This intentionally discards all dynamic facts **and private
+   pending/approved/refused reservation records** from previous runs.
 3. Read up to three scoped static records and initial dynamic facts, validate them,
    and prepare bounded baseline JSON evidence before accepting interaction. A missing
    configured location or unusable baseline is a startup error.
@@ -157,7 +164,8 @@ do not reset SQLite or seed Chroma. The next server lifespan resets SQLite again
 SQLite must be outside the persistent Chroma directory to prevent destructive path
 overlap. The reset deletes only the configured database/sidecars, never their parent.
 Personal reservation details and chats are not ingested into either public-information
-store. Recording-directory cleanup is agreed for Stage 3, not implemented here.
+store. Submitted details live in a separate private SQLite table, never public fact
+CRUD or RAG evidence. Recording-directory cleanup is agreed for Stage 3, not implemented here.
 
 ### Static inventory and seeding
 
@@ -229,8 +237,9 @@ snapshot supports a location-wide boolean or a map of space IDs to booleans:
 `False` blocks a space; omitted IDs use the static default. Null, aggregate counts,
 strings, and unsupported shapes cannot be used to select options and raise an error.
 Hours/prices retain their existing JSON-compatible payloads.
-These are public observations, not a reservation ledger, capacity holds, or
-availability checks for a requested period. A write timestamp does not prove freshness.
+These snapshots are public observations, not the private reservation ledger. A write
+timestamp does not prove freshness. The Stage 2 ledger separately blocks overlapping
+pending/approved periods and is never included in public evidence.
 
 ### Information retrieval
 
@@ -270,6 +279,12 @@ remains, the evidence has an empty `availability_options` list and
 Blocked spaces are filtered before ranking, so fewer than three (or zero) options are
 offered only when fewer eligible spaces remain, never because a blocked best match
 displaced an eligible one.
+
+For a validated draft period, Python also excludes overlapping pending/approved holds
+before ranking; otherwise it excludes only holds active now and labels the evidence
+`current_observations`. Evidence carries the UTC period and `eligibility_scope`, not
+private ledger fields. `/options` explicitly requests suggestions using a code-owned
+availability query. Changing date/time/timezone values invalidates previous offers.
 
 JSON evidence is appended only to a copy of the latest user message for the model.
 Dynamic snapshots have evidence-budget priority and are the instructed source for
@@ -324,12 +339,103 @@ Substring checks do not prove correct semantic extraction; the user reviews the 
 | `/clear FIELD` | Remove `first_name`, `surname`, `car_number`, `start`, `end`, or `timezone` |
 | `/cancel` | Clear the draft/confirmation, not chat history |
 | `/new` | Start a new empty draft |
+| `/options` | Show up to three current semantic suggestions; validated periods exclude overlapping holds |
+| `/submit SPACE_ID` | Submit one currently offered space for the confirmed period, creating its pending hold before administrator review |
 
 States: `idle`, `collecting`, `awaiting_confirmation`, `ready`, `cancelled`.
 Changes and rejected/unreadable updates invalidate confirmation. `ready` is collected,
 user-confirmed information only. General information turns still use RAG while collecting.
 Current commands/revisions/timezone rules describe implemented behavior, not additional
 assignment requirements that cannot be reconsidered during refactoring.
+
+## Stage 2: submission and human administrator review
+
+### Demo in Studio
+
+1. Start the server as above and use **Chat** mode to collect the required fields
+   and confirm the displayed revision with `/confirm N`.
+2. Send `/options`. Select **one of the IDs actually offered** using `/submit SPACE_ID`
+   (for example, `/submit G-A01` only if that ID appears). Python rechecks eligibility
+   and creates the pending hold before escalation. A conflict refreshes the options;
+   choose again. Suggestions and confirmation alone never create holds.
+3. The chatbot reports **pending** and the graph pauses at `administrator_review`.
+   The human administrator switches the **same thread to Graph mode**, opens the
+   interrupt, and reviews the request fields, space, and UTC period. This is the
+   chosen local administrator channel—not email, Teams, or an external notification.
+4. In the typed interrupt response form, copy the displayed `request_id` and set
+   `decision` to exactly `approve` or `refuse`, then resume the run. If a raw JSON
+   editor is shown instead, supply this shape, replacing the placeholder:
+
+   ```json
+   {"request_id": "COPY_THE_DISPLAYED_REQUEST_ID", "decision": "approve"}
+   ```
+
+5. The first agent's deterministic reply reports the actual SQLite result. Approval
+   retains the allocation and UTC approval time; refusal releases the hold. Neither
+   path writes a file. Return to Chat in the same thread to see the outcome. Use
+   `/new` **after the decision** for a separate sequential one-space request.
+
+There is no new dependency, environment variable, REST route, public UI, or mail setup.
+The second agent lazily uses the existing Azure/DIAL model with its own LangChain
+structured-output runnable and administrator prompt. It receives only canonical
+submitted details, not chat history, and generates a bounded neutral review message.
+Python supplies the exact review facts. Unsafe/unparseable wording or model API
+failures use a fixed review request; wording never supplies decision authority.
+Configuration/unsupported-model failures remain safe errors; the already-created
+hold is retained and the failed graph run can be retried.
+
+### Hold and decision rules
+
+- Periods are half-open UTC intervals **[start, end)**. Pending and approved requests
+  block overlaps on the same space/location, including earlier requests from the
+  same thread. Adjacent periods can share a space. No multi-space request is modeled.
+- `/submit` requires confirmed current details and a currently offered ID bound to
+  that period. Public overrides and interval conflicts are rechecked together inside
+  a short SQLite write transaction. Transactions never span embeddings, model calls,
+  or human review.
+- The stable request ID is `draft_id:revision`. Replaying submission cannot create a
+  duplicate or silently change its space/details. Administrator-node replay does not
+  regenerate the review message; decision replay preserves the original timestamp.
+- Only the typed administrator resume applies a decision. Chat claims, user `yes`,
+  model wording, and forged message-input fields cannot approve a reservation. Invalid
+  or mismatched responses produce a fresh review interrupt without changing SQLite.
+- While waiting, the current request cannot be edited, cancelled, or replaced by
+  `/new`. It waits for human review without an expiry timer. After a decision, replies
+  retain that outcome until `/new`; `/cancel` does not reverse an approved allocation.
+- Submission rechecks that start is still future. If an approval arrives at/after
+  start, the request becomes `elapsed`, not approved, and its hold is released.
+  Refusal is still allowed. Ended periods stop blocking on-demand queries without
+  background cleanup or deleting historical records. Approval reversal is out of scope.
+- SQLite is authoritative. A startup reset removes the ledger even if Agent Server
+  still has an old checkpoint. An old review cannot resurrect a missing request:
+  it reports the reset and asks for `/new`.
+- Standalone callers must inject a checkpointer and use the same `thread_id` for
+  `Command(resume=...)`; Agent Server supplies persistence automatically. Submission
+  without a checkpointer is rejected before creating a hold.
+
+### Trusted-local boundary and verification limits
+
+**Studio and Agent Server remain trusted local development surfaces.** There is no
+separate administrator login/role or multi-user authorization boundary. Anyone with
+local graph resume/state access can act as the reviewer; a request-ID check correlates
+the response, not authenticates a human. Keep the server on localhost and give Studio
+access only to the trusted operator. User and administrator roles are distinct workflow
+steps, not distinct secured applications.
+
+Necessary submitted personal fields reach the administrator-composition model and
+appear in private interrupt payloads/SQLite/checkpoints. They do not enter Chroma,
+public fact CRUD, or RAG evidence. Raw administrator model tokens are suppressed with
+`nostream`; code-generated user pending/outcome replies appear in the `messages`
+stream. Debug/state/task APIs, traces, and event streams remain trusted private data.
+The general privacy limitations below still apply; this does not claim confidentiality
+from the local developer or comprehensive prompt-injection protection.
+
+Offline tests exercise actual sync/async LangGraph interrupts/resumes with temporary
+Chroma/SQLite, injected models/embeddings/clocks, strict decision validation, overlap
+races, refusal release, restart reset, graph replay after committed writes, and guarded
+model streaming. **This slice has not run a live administrator-model call or manually
+verified the Studio form.** Existing Stage 1 live results are not Stage 2 live evidence.
+Load tests and MCP/file integration remain Stages 3–4 work.
 
 ### Model compatibility
 
@@ -437,26 +543,18 @@ Source checks:
 
 ```bash
 uv tool run ty check
-uv tool run ruff check app.py parking_agent.py guardrails.py guardrail_evaluation.py rag_evaluation.py reservation_collection.py context_augmentation.py commons storage tests
-uv tool run ruff format --check app.py parking_agent.py guardrails.py guardrail_evaluation.py rag_evaluation.py reservation_collection.py context_augmentation.py commons storage tests
+uv tool run ruff check app.py parking_agent.py administrator_agent.py guardrails.py guardrail_evaluation.py rag_evaluation.py reservation_collection.py context_augmentation.py commons storage tests
+uv tool run ruff format --check app.py parking_agent.py administrator_agent.py guardrails.py guardrail_evaluation.py rag_evaluation.py reservation_collection.py context_augmentation.py commons storage tests
 ```
 
 ## Next steps
 
-Finish the four stages using the retained choices in AGENTS.md. Decide administrator
-channel, MCP implementation/output location, and the simple allocation/approval flow
-when working on those steps. Pending request holds are selected for the later flow;
-timing, overlap rules, refusal handling, and on-demand validation/cleanup still need
-agreement. Do not build expiry timers, scaling, or production infrastructure speculatively.
-
-Multiple bookings in one thread are selected as separate sequential one-space
-requests, not one multi-space request. Submission is not implemented. The recommended
-later protection is a short SQLite write transaction that rechecks period eligibility
-and inserts a pending hold atomically, with request-ID idempotency. Earlier holds
-from the same thread block overlaps just like other threads' holds. Refresh options
-after conflicts; never hold transactions open for embeddings, LLM calls, or human
-review. Half-open periods `[start, end)` are recommended, not an agreed implemented
-overlap rule. Holds/release/refusal timing still need agreement.
+Finish Stage 3 using the retained choices in AGENTS.md: decide MCP implementation
+(or documented permitted fallback), output-file layout, retries, and practical access
+protection. Preserve the implemented Stage 2 holds and decisions. If recording fails,
+keep human approval and its applicable allocation in SQLite and explicitly report
+the recording failure. Then finish full-pipeline integration/load tests and assignment
+documentation in Stage 4. Do not add expiry timers or production infrastructure.
 
 ## References
 
@@ -464,5 +562,7 @@ overlap rule. Holds/release/refusal timing still need agreement.
 - [Server startup lifespan](https://docs.langchain.com/langsmith/custom-lifespan)
 - [Studio setup](https://docs.langchain.com/langsmith/quick-start-studio)
 - [LangGraph persistence](https://docs.langchain.com/oss/python/langgraph/persistence)
+- [LangGraph interrupts and typed Studio responses](https://docs.langchain.com/oss/python/langgraph/interrupts)
+- [Using Studio](https://docs.langchain.com/langsmith/use-studio)
 - [LangChain Chroma integration](https://docs.langchain.com/oss/python/integrations/vectorstores/chroma)
 - [Python SQLite](https://docs.python.org/3/library/sqlite3.html)

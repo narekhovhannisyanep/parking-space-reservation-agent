@@ -36,6 +36,7 @@ from reservation_collection import (
     validate_draft,
 )
 from storage import DynamicParkingStore, StaticParkingStore
+from storage.reservations import ReservationStore
 
 NOW = datetime(2026, 10, 28, tzinfo=UTC)
 DETAILS = {
@@ -280,12 +281,15 @@ class GraphCollectionTests(unittest.IsolatedAsyncioTestCase):
         self.static.get_spaces.return_value = []
         self.dynamic = Mock(spec=DynamicParkingStore)
         self.dynamic.list_facts.return_value = []
+        ledger = Mock(spec=ReservationStore)
+        ledger.blocked_spaces.return_value = []
         self.now = NOW
         self.agent = ParkingSpaceReservationAgent(
             llm_client=self.model,
             reservation_extractor=self.extractor,
             static_store=self.static,
             dynamic_store=self.dynamic,
+            reservation_store=ledger,
             checkpointer=InMemorySaver(),
             clock=lambda: self.now,
         )

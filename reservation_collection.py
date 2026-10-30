@@ -268,11 +268,11 @@ def confirmation_summary(request: ValidatedReservationRequest) -> str:
         f"Location: {request.location_id}\nTimezone: {request.timezone}\n"
         f"Start (UTC): {request.start.isoformat()}\nEnd (UTC): {request.end.isoformat()}\n"
         f"Reply /confirm {request.revision} (or yes immediately after this summary), or provide corrections.\n"
-        "This confirms your details only. Administrator approval, allocation, and recording are not available."
+        "This confirms your details only, not administrator approval. After confirmation, send /options and select one with /submit SPACE_ID. No file recording is implemented."
     )
 
 
-READY_REPLY = "Your details are confirmed and ready for the future approval workflow. No request has been submitted, no space has been allocated, and no reservation has been approved or recorded."
+READY_REPLY = "Your details are confirmed. Send /options for suggestions for your period, then /submit SPACE_ID to request one offered space. No request has been submitted, no space has been allocated, and no reservation has been approved or recorded."
 EXTRACTION_FAILURE = "Unable to read reservation details safely. Please retry or provide explicit field values. Previous confirmation has been cleared; no request has been submitted."
 
 

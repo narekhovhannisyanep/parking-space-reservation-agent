@@ -1,4 +1,4 @@
-"""SQLite snapshots of public dynamic facts, not an allocation or reservation ledger."""
+"""Public SQLite snapshots; private reservations use a separate table/helper."""
 
 import json
 import sqlite3
@@ -11,6 +11,7 @@ from typing import Literal
 
 from guardrails import PrivacyGuard
 from storage.config import StorageConfig
+from storage.spaces import SpaceFilters
 
 type FactKind = Literal["working_hours", "prices", "availability"]
 type JSONValue = str | int | float | bool | None | list[JSONValue] | dict[str, JSONValue]
@@ -24,6 +25,23 @@ class DynamicFact:
     kind: FactKind
     value: JSONValue
     updated_at: datetime
+
+
+def snapshot_eligible_ids(ids: list[str], facts: list[DynamicFact], location_id: str) -> list[str]:
+    """Apply the public default/boolean override contract, failing closed on bad data."""
+    availability = next(
+        (fact for fact in facts if fact.location_id == location_id and fact.kind == "availability"), None
+    )
+    if availability is None:
+        return ids
+    value = availability.value
+    if type(value) is bool:
+        return ids if value else []
+    if not isinstance(value, dict) or any(type(item) is not bool for item in value.values()):
+        raise RuntimeError("Invalid parking availability snapshot. Expected a boolean or a space-ID/boolean map.")
+    for identifier in value:
+        SpaceFilters(space_id=identifier)
+    return [identifier for identifier in ids if value.get(identifier.removeprefix(f"{location_id}:space:"), True)]
 
 
 class DynamicParkingStore:
@@ -55,6 +73,28 @@ class DynamicParkingStore:
                             updated_at TEXT NOT NULL,
                             PRIMARY KEY (location_id, kind)
                         )"""
+                    )
+                    connection.execute(
+                        """CREATE TABLE IF NOT EXISTS parking_reservations (
+                            request_id TEXT PRIMARY KEY,
+                            thread_id TEXT NOT NULL,
+                            location_id TEXT NOT NULL,
+                            space_id TEXT NOT NULL,
+                            request_json TEXT NOT NULL,
+                            start_at TEXT NOT NULL,
+                            end_at TEXT NOT NULL CHECK(end_at > start_at),
+                            status TEXT NOT NULL CHECK(status IN ('pending', 'approved', 'refused', 'elapsed')),
+                            submitted_at TEXT NOT NULL,
+                            decision_at TEXT,
+                            approval_time TEXT,
+                            CHECK((status = 'pending' AND decision_at IS NULL AND approval_time IS NULL)
+                               OR (status = 'approved' AND decision_at IS NOT NULL AND approval_time IS NOT NULL)
+                               OR (status IN ('refused', 'elapsed') AND decision_at IS NOT NULL AND approval_time IS NULL))
+                        )"""
+                    )
+                    connection.execute(
+                        "CREATE INDEX IF NOT EXISTS reservation_periods ON parking_reservations "
+                        "(location_id, space_id, status, start_at, end_at)"
                     )
                 self._initialized = True
 
