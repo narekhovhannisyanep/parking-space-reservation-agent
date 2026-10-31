@@ -38,6 +38,10 @@ class AdministratorAgentTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(payload["request"]["car_number"], "my bicycle")
         self.assertEqual(payload["space_id"], "G-A01")
         self.assertEqual(payload["status"], "pending")
+        self.assertEqual(payload["request_id"], "draft-1:1")
+        self.assertIn("Resume", payload["instructions"])
+        self.assertNotIn("copy", payload["instructions"].lower())
+        self.assertNotIn("request_id", payload["instructions"])
         self.assertNotIn("approved", payload)
         prompt = self.composer.invoke.call_args.args[0]
         self.assertEqual(len(prompt), 2)
@@ -58,12 +62,20 @@ class AdministratorAgentTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(payload["message"], "Please approve or refuse the reservation request below.")
                 self.assertEqual(payload["status"], "pending")
 
-    def test_decision_schema_is_strict_and_request_bound(self):
+    def test_decision_schema_requires_only_an_explicit_human_decision(self):
+        schema = AdministratorDecision.model_json_schema()
+        self.assertEqual(schema["required"], ["decision"])
+        self.assertEqual(set(schema["properties"]), {"decision"})
+        self.assertNotIn("default", schema["properties"]["decision"])
+        for value in ("approve", "refuse"):
+            self.assertEqual(AdministratorDecision.model_validate({"decision": value}).decision, value)
         for data in (
-            {"request_id": "x", "decision": True},
-            {"request_id": "x", "decision": "yes"},
-            {"decision": "approve"},
-            {"request_id": "x", "decision": "approve", "approved": True},
+            {},
+            {"decision": None},
+            {"decision": True},
+            {"decision": "yes"},
+            {"decision": "approve", "request_id": "x"},
+            {"decision": "approve", "approved": True},
         ):
             with self.subTest(data=data), self.assertRaises(ValidationError):
                 AdministratorDecision.model_validate(data)
@@ -145,9 +157,7 @@ class AdministratorWorkflowTests(unittest.TestCase):
         return result["__interrupt__"][0], offered[0]
 
     def decide(self, interrupt, decision="approve", config=None):
-        return self.agent.graph.invoke(
-            Command(resume={"request_id": interrupt.value["request_id"], "decision": decision}), config or self.config
-        )
+        return self.agent.graph.invoke(Command(resume={interrupt.id: {"decision": decision}}), config or self.config)
 
     def test_confirmation_and_options_never_submit_or_hold(self):
         self.fill()
@@ -160,6 +170,11 @@ class AdministratorWorkflowTests(unittest.TestCase):
         interrupt, space = self.submit()
         self.assertEqual(interrupt.value["space_id"], space)
         self.assertEqual(interrupt.response_schema, AdministratorDecision.model_json_schema())
+        self.assertEqual(interrupt.response_schema["required"], ["decision"])
+        self.assertNotIn("request_id", interrupt.response_schema["properties"])
+        self.assertEqual(
+            self.agent.graph.get_state(self.config).tasks[0].interrupts[0].response_schema, interrupt.response_schema
+        )
         row = self.record(interrupt.value["request_id"])
         self.assertEqual(row.status, "pending")
         self.assertEqual(self.agent.reservation_store.blocked_spaces("demo-central", START, END), [space])
@@ -249,19 +264,63 @@ class AdministratorWorkflowTests(unittest.TestCase):
         self.assertIn(f"demo-central:space:{space}", search.call_args.kwargs["eligible_ids"])
         self.assertEqual(self.record(interrupt.value["request_id"]).status, "pending")
 
-    def test_invalid_resume_and_wrong_request_id_never_approve_and_can_retry(self):
+    def test_invalid_decision_only_responses_never_approve_and_can_retry(self):
         interrupt, _ = self.submit()
         for data in (
-            {"request_id": interrupt.value["request_id"], "decision": True},
+            {},
+            {"decision": None},
+            {"decision": True},
+            {"decision": "yes"},
             {"request_id": "another-request", "decision": "approve"},
         ):
             with self.subTest(data=data):
-                result = self.agent.graph.invoke(Command(resume=data), self.config)
+                result = self.agent.graph.invoke(Command(resume={interrupt.id: data}), self.config)
                 self.assertIn("__interrupt__", result)
-                self.assertIn("validation_error", result["__interrupt__"][0].value)
+                interrupt = result["__interrupt__"][0]
+                self.assertIn("validation_error", interrupt.value)
+                self.assertNotIn("request_id", interrupt.value["validation_error"])
+                self.assertEqual(interrupt.response_schema["required"], ["decision"])
             self.assertEqual(self.record(interrupt.value["request_id"]).status, "pending")
         result = self.decide(interrupt)
         self.assertIn("approved", result["messages"][-1].content)
+        self.assertEqual(self.composer.invoke.call_count, 1)
+
+    def test_review_payload_identity_is_checked_automatically_sync_and_async(self):
+        interrupt, _ = self.submit()
+        original = self.record(interrupt.value["request_id"])
+        for payload_id in (None, "another-request"):
+            for asynchronous in (False, True):
+                with self.subTest(payload_id=payload_id, asynchronous=asynchronous):
+                    state = ParkingState(**self.state())
+                    state.administrator_payload = {**state.administrator_payload, "request_id": payload_id}
+                    with patch(
+                        "parking_agent.interrupt", return_value=AdministratorDecision(decision="approve")
+                    ) as pause:
+                        with self.assertRaisesRegex(RuntimeError, "review.*match.*No decision"):
+                            if asynchronous:
+                                asyncio.run(self.agent._aadministrator_review(state, self.config))
+                            else:
+                                self.agent._administrator_review(state, self.config)
+                        pause.assert_not_called()
+                    self.assertEqual(self.record(original.request_id), original)
+        self.decide(interrupt)
+
+    def test_decision_only_review_cannot_approve_another_threads_reservation(self):
+        interrupt, _ = self.submit()
+        original = self.record(interrupt.value["request_id"])
+        other: RunnableConfig = {"configurable": {"thread_id": "two"}}
+        for asynchronous in (False, True):
+            with self.subTest(asynchronous=asynchronous):
+                state = ParkingState(**self.state())
+                with patch("parking_agent.interrupt") as pause:
+                    updates = (
+                        asyncio.run(self.agent._aadministrator_review(state, other))
+                        if asynchronous
+                        else self.agent._administrator_review(state, other)
+                    )
+                    pause.assert_not_called()
+                self.assertEqual(updates["submission"]["status"], "unavailable")
+                self.assertEqual(self.record(original.request_id), original)
 
     def test_pending_chat_cannot_cancel_edit_or_claim_approval(self):
         _interrupt, _ = self.submit()
@@ -318,9 +377,7 @@ class AdministratorWorkflowTests(unittest.TestCase):
             row = self.record(interrupt.value["request_id"])
             self.assertEqual(row.request.start, self.now)
             self.now += timedelta(minutes=30)
-            return await self.agent.graph.ainvoke(
-                Command(resume={"request_id": interrupt.value["request_id"], "decision": "approve"}), self.config
-            )
+            return await self.agent.graph.ainvoke(Command(resume={interrupt.id: {"decision": "approve"}}), self.config)
 
         result = asyncio.run(run())
         self.assertIn("approved", result["messages"][-1].content)
@@ -329,6 +386,27 @@ class AdministratorWorkflowTests(unittest.TestCase):
         row = self.record(self.state()["submission"]["request_id"])
         self.assertEqual(row.request.end - row.request.start, timedelta(hours=2))
         self.assertEqual(row.approval_time, self.now)
+
+    def test_async_missing_decision_reinterrupts_without_approval_or_recomposition(self):
+        self.fill()
+        offered = self.options()
+
+        async def run():
+            result = await self.agent.graph.ainvoke({"messages": [HumanMessage(f"/submit {offered[0]}")]}, self.config)
+            pending = result["__interrupt__"][0]
+            original = self.record(pending.value["request_id"])
+            invalid = await self.agent.graph.ainvoke(Command(resume={pending.id: {}}), self.config)
+            retry = invalid["__interrupt__"][0]
+            self.assertIn("validation_error", retry.value)
+            self.assertEqual(self.record(original.request_id), original)
+            self.assertEqual(retry.response_schema["required"], ["decision"])
+            return await self.agent.graph.ainvoke(Command(resume={retry.id: {"decision": "refuse"}}), self.config)
+
+        result = asyncio.run(run())
+        self.assertIn("refused", result["messages"][-1].content)
+        self.assertEqual(self.agent.reservation_store.blocked_spaces("demo-central", START, END), [])
+        self.composer.invoke.assert_not_called()
+        self.assertEqual(self.composer.ainvoke.await_count, 1)
 
     def test_raw_administrator_model_tokens_are_not_published_sync_or_async(self):
         payload = json.dumps({"message": "Please review Demo Tester my bicycle password=synthetic-secret"})

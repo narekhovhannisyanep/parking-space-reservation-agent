@@ -152,8 +152,11 @@ Internal graph state adds `offer_duration_hours`, `refresh_options`, `submission
 space, and status; SQLite supplies canonical details on review/replay. The second
 LangChain agent generates bounded neutral review wording from the submitted request.
 Python builds the exact private review payload and displays it through a typed Studio
-interrupt; the human returns `{request_id, decision}` with `approve` or `refuse`.
-Invalid/mismatched values open a fresh interrupt without changing SQLite. The first
+interrupt; the human returns only `{decision}` with `approve` or `refuse`. No default
+decision or manual request-ID entry is provided. Python uses the checkpointed submission
+and current thread to load SQLite and checks the internal review-payload ID matches that
+record. Invalid human responses open a fresh interrupt without changing SQLite; an
+internal identity mismatch fails closed before showing/applying a decision. The first
 agent reports the code-controlled outcome, not model-generated authority.
 
 Refusal releases the hold; approval before end retains it and its approval time, even

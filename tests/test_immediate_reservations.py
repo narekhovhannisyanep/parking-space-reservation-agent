@@ -216,7 +216,7 @@ class ImmediateReservationTests(unittest.TestCase):
         self.assertEqual(self.state()["reservation"], confirmed)
         self.assertIn(row.request.end.isoformat(), self.state()["messages"][-1].content)
         self.now += timedelta(minutes=30)
-        self.agent.graph.invoke(Command(resume={"request_id": row.request_id, "decision": "approve"}), self.config)
+        self.agent.graph.invoke(Command(resume={"decision": "approve"}), self.config)
         approved = self.store.get(row.request_id, "one")
         assert approved is not None
         self.assertEqual(approved.status, "approved")

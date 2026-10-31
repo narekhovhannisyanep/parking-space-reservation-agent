@@ -388,18 +388,32 @@ ledger; old submitted checkpoints cannot resurrect a missing request. Chroma is 
    The human administrator switches the **same thread to Graph mode**, opens the
    interrupt, and reviews the request fields, space, and UTC period. This is the
    chosen local administrator channel—not email, Teams, or an external notification.
-4. In the typed interrupt response form, copy the displayed `request_id` and set
-   `decision` to exactly `approve` or `refuse`, then resume the run. If a raw JSON
-   editor is shown instead, supply this shape, replacing the placeholder:
+4. In the typed interrupt response form, review the reservation, select exactly
+   `approve` or `refuse` in **Decision**, then click the right-hand **Resume** button.
+   Do not use the lower-left graph-input **Submit** button for a human decision.
+   No request ID needs to be copied, constructed, or entered. If a raw JSON editor
+   is shown instead, supply only:
 
    ```json
-   {"request_id": "COPY_THE_DISPLAYED_REQUEST_ID", "decision": "approve"}
+   {"decision": "approve"}
    ```
 
 5. The first agent's deterministic reply reports the actual SQLite result. Approval
    retains the allocation and UTC approval time; refusal releases the hold. Neither
    path writes a file. Return to Chat in the same thread to see the outcome. Use
    `/new` **after the decision** for a separate sequential one-space request.
+
+The form has **one required field and no default decision**. Studio may immediately
+show a required-field warning while **Decision** is unselected; this is validation
+of the empty human response, not missing reservation details at handoff. Internal
+`request_id`/draft IDs may still appear in private review/debug data, but the administrator
+does not supply them. Python resolves the checkpointed submission in the current thread
+and checks its review-payload identity against SQLite before showing/applying a decision.
+
+**After updating from the older two-field form:** restart the local server and test a
+fresh reservation. An already-paused interrupt can retain its old form schema in the
+checkpoint. Startup deliberately clears SQLite, so old submitted requests become
+unavailable; they are not migrated or resurrected. Persistent Chroma is untouched.
 
 There is no new dependency, environment variable, REST route, public UI, or mail setup.
 The second agent lazily uses the existing Azure/DIAL model with its own LangChain
@@ -424,8 +438,10 @@ hold is retained and the failed graph run can be retried.
   duplicate or silently change its space/details. Administrator-node replay does not
   regenerate the review message; decision replay preserves the original timestamp.
 - Only the typed administrator resume applies a decision. Chat claims, user `yes`,
-  model wording, and forged message-input fields cannot approve a reservation. Invalid
-  or mismatched responses produce a fresh review interrupt without changing SQLite.
+  model wording, and forged message-input fields cannot approve a reservation. Missing,
+  invalid, or extra response fields produce a fresh review interrupt without changing
+  SQLite. A mismatched internal review/request identity fails with a clear exception
+  before interrupting or applying any decision; the human never fixes this by entering an ID.
 - While waiting, the current request cannot be edited, cancelled, or replaced by
   `/new`. It waits for human review without an expiry timer. After a decision, replies
   retain that outcome until `/new`; `/cancel` does not reverse an approved allocation.
@@ -445,8 +461,8 @@ hold is retained and the failed graph run can be retried.
 
 **Studio and Agent Server remain trusted local development surfaces.** There is no
 separate administrator login/role or multi-user authorization boundary. Anyone with
-local graph resume/state access can act as the reviewer; a request-ID check correlates
-the response, not authenticates a human. Keep the server on localhost and give Studio
+local graph resume/state access can act as the reviewer; automatic thread/request checks
+correlate the response, not authenticate a human. Keep the server on localhost and give Studio
 access only to the trusted operator. User and administrator roles are distinct workflow
 steps, not distinct secured applications.
 
@@ -461,7 +477,9 @@ from the local developer or comprehensive prompt-injection protection.
 Offline tests exercise actual sync/async LangGraph interrupts/resumes with temporary
 Chroma/SQLite, injected models/embeddings/clocks, strict decision validation, overlap
 races, refusal release, restart reset, graph replay after committed writes, and guarded
-model streaming. **This slice has not run a live administrator-model call or manually
+model streaming. A network-blocked real Agent Server test also checks the one-field
+interrupt schema served to Studio, empty-response retry and decision-only approval.
+**This slice has not run a live administrator-model call or manually
 verified the Studio form.** Existing Stage 1 live results are not Stage 2 live evidence.
 Load tests and MCP/file integration remain Stages 3–4 work.
 

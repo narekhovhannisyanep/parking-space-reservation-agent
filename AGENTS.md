@@ -118,7 +118,10 @@ as code are extra-credit artifacts; see the baseline for details.
 - **Administrator channel:** the user chose Studio review, not REST/email/messenger.
   The second LangChain agent prepares a bounded review message from canonical submitted
   details, and Python shows the private facts through a typed LangGraph interrupt.
-  The trusted local human operator resumes with request ID and `approve`/`refuse`.
+  The trusted local human operator selects only `approve`/`refuse` and clicks Resume;
+  no manual request-ID entry or default decision. Python resolves the checkpointed
+  submission in the current thread and checks its internal review-payload ID against
+  the SQLite record. Internal IDs remain for tracking/idempotency, not human input.
   Studio is not a separate authenticated administrator application; no notification,
   public UI, new service, or new dependency is selected.
 - **Decision lifecycle:** refusal immediately releases the hold; approval retains it
@@ -221,7 +224,9 @@ as code are extra-credit artifacts; see the baseline for details.
   not chat history. Python owns payload facts and decisions; unsafe/unparseable wording
   or API failure uses a fixed review request. Raw administrator tokens use `nostream`.
   Private payloads, SQLite, checkpoints/debug and Studio remain trusted local data.
-  Typed response/request-ID checks are not administrator authentication.
+  The typed human response has only required `decision`; missing/invalid/extra fields
+  reinterrupt without changing SQLite. An internal review/request mismatch fails closed
+  before showing/applying a decision. These checks are not administrator authentication.
 - Structured extraction defaults to `function_calling`, with explicit `json_schema`
   support. Opt-in live smoke checks passed with the earlier scheduled-booking schema
   on 2026-10-30; the duration-only schema has offline coverage, not live verification.
@@ -253,7 +258,9 @@ as code are extra-credit artifacts; see the baseline for details.
   and evaluation harness. Required load tests are not complete (Stage 4).
 - Stages 1–2 are implemented; optional retrieval tuning remains possible. Stage 2 has
   offline sync/async interrupt/resume, concurrency, temporal, refusal, reset, replay and
-  actual model-stream boundary tests; its live model/Studio form has not been verified.
+  actual model-stream boundary tests. A network-blocked real Agent Server test verifies
+  the decision-only schema served to Studio, empty-response retry and approval; the
+  live model/browser form has not been manually verified.
   Stages 3–4 remain incomplete: MCP/file recording and full-pipeline/load tests.
 
 ## Next-session handoff
@@ -261,11 +268,14 @@ as code are extra-credit artifacts; see the baseline for details.
 - **Where we stopped:** Stages 1–2 use duration-only immediate reservations: names,
   vehicle identifier, hours → confirmed details →
   `/options` → `/submit SPACE_ID` → atomic private SQLite hold → second LangChain
-  communication agent → typed Studio human review → code-controlled outcome reply.
+  communication agent → decision-only typed Studio human review → code-controlled outcome reply.
+  The administrator reviews the fields and chooses approve/refuse → Resume; no request
+  ID is copied or constructed. Internal request identity is checked by Python. Studio
+  can flag an empty Decision immediately; no default decision is supplied to hide that.
   Python fixes the UTC start/end at submission; review waiting consumes the duration,
   and approval is allowed until end. Missing-field prompts and offline delay/replay/
   boundary tests are updated. README contains the demo and trusted-local limitations.
-  The duration-only schema and Stage 2 have not been manually
+  The duration-only schema and decision-only Stage 2 form have not been manually
   demonstrated in Studio or checked with a live administrator model. Earlier VPN/Studio
   connectivity and Stage 1 evaluation do not establish that validation. No static data
   or provider change was needed; do not erase/reseed populated Chroma.

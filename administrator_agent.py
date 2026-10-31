@@ -9,10 +9,10 @@ from langchain_core.exceptions import OutputParserException
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_core.runnables import Runnable, RunnableConfig
 from openai import APIError
-from pydantic import Field, ValidationError, field_validator
+from pydantic import Field, ValidationError
 
 from guardrails import GuardrailError, PrivacyGuard, guarded_model_config
-from reservation_collection import StrictModel, SubmittedReservationRequest, clean_text
+from reservation_collection import StrictModel, SubmittedReservationRequest
 from storage.reservations import HumanDecision
 
 ADMINISTRATOR_PROMPT = """You are the administrator-communication agent for parking reservations.
@@ -32,15 +32,11 @@ class ReviewWording(StrictModel):
 
 
 class AdministratorDecision(StrictModel):
-    """Human-only typed Studio resume value, tied to the displayed request."""
+    """Human-only Studio response; Python identifies the checkpointed request."""
 
-    request_id: str = Field(description="Copy the request_id displayed in the review payload.")
-    decision: HumanDecision = Field(description="The human administrator chooses approve or refuse.")
-
-    @field_validator("request_id")
-    @classmethod
-    def validate_identifier(cls, value: str) -> str:
-        return clean_text(value)
+    decision: HumanDecision = Field(
+        title="Decision", description="Review the reservation, choose approve or refuse, then click Resume."
+    )
 
 
 class AdministratorAgent:
@@ -95,7 +91,7 @@ class AdministratorAgent:
             "status": "pending",
             "space_id": space_id,
             "request": request.model_dump(mode="json"),
-            "instructions": "Human administrator only: copy request_id and choose approve or refuse. The period started at submission; waiting for review counts toward the requested hours. Approval must arrive before the displayed end. No file recording is implemented.",
+            "instructions": "Human administrator only: review the reservation details, choose approve or refuse in Decision, then click Resume. The application identifies the request automatically. The period started at submission; waiting for review counts toward the requested hours. Approval must arrive before the displayed end. No file recording is implemented.",
         }
 
     def prepare(

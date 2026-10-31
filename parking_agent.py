@@ -622,14 +622,21 @@ class ParkingSpaceReservationAgent:
         payload = await self.administrator_agent.aprepare(row.request, row.space_id, row.request_id, config)
         return {"administrator_payload": payload}
 
+    @staticmethod
+    def _check_review_identity(state: ParkingState, row: ReservationRecord) -> None:
+        # Correlate code-owned review facts with the thread-scoped ledger, not human input.
+        if state.administrator_payload.get("request_id") != row.request_id:
+            raise RuntimeError(
+                "Administrator review does not match the submitted reservation. No decision was applied."
+            )
+
     def _administrator_review(self, state: ParkingState, config: RunnableConfig) -> dict:
         row = self._review_record(state, config)
         if row is not None and row.status == "pending":
+            self._check_review_identity(state, row)
             try:
                 decision = interrupt(state.administrator_payload, response_schema=AdministratorDecision)
             except ValidationError:
-                return self._invalid_review(state)
-            if decision.request_id != row.request_id:
                 return self._invalid_review(state)
             row = self._apply_decision(row, decision, config)
         return {
@@ -643,11 +650,10 @@ class ParkingSpaceReservationAgent:
     async def _aadministrator_review(self, state: ParkingState, config: RunnableConfig) -> dict:
         row = await asyncio.to_thread(self._review_record, state, config)
         if row is not None and row.status == "pending":
+            self._check_review_identity(state, row)
             try:
                 decision = interrupt(state.administrator_payload, response_schema=AdministratorDecision)
             except ValidationError:
-                return self._invalid_review(state)
-            if decision.request_id != row.request_id:
                 return self._invalid_review(state)
             row = await asyncio.to_thread(self._apply_decision, row, decision, config)
         return {
@@ -664,7 +670,7 @@ class ParkingSpaceReservationAgent:
             "review_retry": True,
             "administrator_payload": {
                 **state.administrator_payload,
-                "validation_error": "Copy the displayed request_id and choose exactly approve or refuse. No decision was applied.",
+                "validation_error": "Choose exactly approve or refuse in Decision, then click Resume. No decision was applied.",
             },
         }
 

@@ -25,7 +25,7 @@ class AgentServerStartupTests(unittest.TestCase):
             env = {
                 "PATH": os.environ.get("PATH", ""),
                 "HOME": directory,
-                "PYTHONPATH": str(project),
+                "PYTHONPATH": os.pathsep.join([str(project), str(project / "tests")]),
                 "PARKING_CHROMA_DIRECTORY": str(storage.chroma_directory),
                 "PARKING_SQLITE_PATH": str(storage.sqlite_path),
                 "PARKING_LOCATION_ID": "demo-central",
@@ -49,9 +49,29 @@ class AgentServerStartupTests(unittest.TestCase):
 
                 with patch.object(socket.socket, "connect", prohibit_network):
                     import app
+                    from administrator_agent import ReviewWording
+                    from langchain_core.runnables import RunnableLambda
+                    from reservation_collection import FieldUpdate, ReservationExtraction
+                    from storage import StaticParkingStore
                     from starlette.testclient import TestClient
                     from langgraph_api.server import app as server_app
                     from langgraph_api.graph import GRAPHS
+                    from test_static_storage import KeywordEmbeddings
+
+                    app.parking_agent.static_store = StaticParkingStore(
+                        app.parking_agent.config.storage,
+                        embeddings=KeywordEmbeddings(),
+                        privacy_guard=app.parking_agent.privacy_guard,
+                    )
+                    extraction = ReservationExtraction()
+                    app.parking_agent._reservation_extractor = RunnableLambda(lambda _: extraction)
+                    review_calls = []
+
+                    def compose_review(_):
+                        review_calls.append(True)
+                        return ReviewWording(message="Please review this reservation request.")
+
+                    app.parking_agent._administrator_composer = RunnableLambda(compose_review)
 
                     assert not app.parking_agent.startup_ready
                     with TestClient(server_app) as client:
@@ -71,14 +91,72 @@ class AgentServerStartupTests(unittest.TestCase):
                             assert "Provide" in response.json()["messages"][-1]["content"]
                         fact = app.parking_agent.dynamic_store.get_fact("demo-central", "prices")
                         assert fact is not None and fact.value == 7
+
+                        # Exercise the actual endpoints that supply Studio's interrupt form.
+                        response = client.post("/threads", json={})
+                        assert response.status_code == 200, response.text
+                        thread_id = response.json()["thread_id"]
+                        thread_path = f"/threads/{thread_id}"
+
+                        def run(**body):
+                            response = client.post(thread_path + "/runs/wait", json={
+                                "assistant_id": "parking_space_reservation", **body
+                            })
+                            assert response.status_code == 200, response.text
+                            assert "__error__" not in response.json(), response.text
+                            return response.json()
+
+                        def state():
+                            response = client.get(thread_path + "/state")
+                            assert response.status_code == 200, response.text
+                            return response.json()
+
+                        def turn(text):
+                            return run(input={"messages": [{"role": "user", "content": text}]})
+
+                        details = {
+                            "first_name": "Demo", "surname": "Tester",
+                            "car_number": "my bicycle", "duration_hours": "2",
+                        }
+                        extraction = ReservationExtraction(intent="reservation", updates=[
+                            FieldUpdate.model_validate({"field": key, "value": value})
+                            for key, value in details.items()
+                        ])
+                        turn("Reserve: " + "; ".join(details.values()))
+                        extraction = ReservationExtraction()
+                        turn(f"/confirm {state()['values']['reservation']['revision']}")
+                        turn("/options")
+                        turn("/submit " + state()["values"]["offered_space_ids"][0])
+                        pending = state()["tasks"][0]["interrupts"][0]
+                        schema = pending["response_schema"]
+                        assert schema["required"] == ["decision"], schema
+                        assert set(schema["properties"]) == {"decision"}, schema
+                        assert "default" not in schema["properties"]["decision"], schema
+                        assert "copy" not in pending["value"]["instructions"].lower()
+                        request_id = pending["value"]["request_id"]
+                        original = app.parking_agent.reservation_store.get(request_id, thread_id)
+                        assert original is not None and original.status == "pending"
+
+                        run(command={"resume": {pending["id"]: {}}})
+                        retry = state()["tasks"][0]["interrupts"][0]
+                        assert "validation_error" in retry["value"], retry
+                        assert retry["response_schema"] == schema
+                        assert app.parking_agent.reservation_store.get(request_id, thread_id) == original
+                        result = run(command={"resume": {retry["id"]: {"decision": "approve"}}})
+                        assert "approved" in result["messages"][-1]["content"], result
+                        assert not state()["tasks"]
+                        row = app.parking_agent.reservation_store.get(request_id, thread_id)
+                        assert row is not None and row.status == "approved" and row.approval_time is not None
+                        assert len(review_calls) == 1, review_calls
+                        assert app.parking_agent._llm_client is None
                     assert not app.parking_agent.startup_ready
-                    print("Agent Server startup and thread isolation passed.")
+                    print("Agent Server startup, thread isolation and decision-only review passed.")
             """)
             result = subprocess.run(
                 [sys.executable, "-c", code], cwd=root, env=env, capture_output=True, text=True, timeout=60, check=False
             )
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-            self.assertIn("Agent Server startup and thread isolation passed.", result.stdout)
+            self.assertIn("Agent Server startup, thread isolation and decision-only review passed.", result.stdout)
 
 
 if __name__ == "__main__":
