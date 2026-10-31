@@ -24,6 +24,8 @@ class AppTests(unittest.TestCase):
             patch("storage.static.AzureOpenAIEmbeddings") as embeddings,
             patch("storage.static.Chroma") as chroma,
             patch("storage.dynamic.sqlite3.connect") as sqlite,
+            patch("recording_client.Client") as mcp_client,
+            patch("subprocess.Popen") as process,
             patch("builtins.input") as terminal,
         ):
             namespace = runpy.run_path(app.__file__)
@@ -32,6 +34,8 @@ class AppTests(unittest.TestCase):
         embeddings.assert_not_called()
         chroma.assert_not_called()
         sqlite.assert_not_called()
+        mcp_client.assert_not_called()
+        process.assert_not_called()
         terminal.assert_not_called()
         self.assertIs(namespace["agent"], namespace["parking_agent"].graph)
 

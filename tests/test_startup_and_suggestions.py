@@ -15,6 +15,7 @@ from langchain_core.messages import AIMessage, HumanMessage
 from langchain_core.runnables import RunnableLambda
 from langgraph.checkpoint.memory import InMemorySaver
 from starlette.testclient import TestClient
+from test_recording_mcp import in_process_recorder
 from test_static_storage import KeywordEmbeddings, document
 
 import app
@@ -49,6 +50,7 @@ class ParkingFixture(unittest.TestCase):
             reservation_extractor=RunnableLambda(lambda _: ReservationExtraction()),
             checkpointer=InMemorySaver(),
             require_startup=True,
+            recording_client=in_process_recorder(self.storage),
         )
 
     def turn(self, text="Available spaces?", thread="alice"):
@@ -173,13 +175,47 @@ class StartupTests(ParkingFixture):
         self.assertFalse(self.storage.chroma_directory.exists())
         self.assertFalse(self.storage.sqlite_path.exists())
 
-    def test_startup_does_not_implement_recording_output_cleanup(self):
+    def test_startup_resets_only_the_dedicated_recording_output(self):
         output = self.root / "approved-reservations"
         output.mkdir()
         existing = output / "existing.txt"
-        existing.write_text("Stage 3 output is untouched in this change.")
+        existing.write_text("Disposable Stage 3 output")
+        sentinel = self.root / "preserve.txt"
+        sentinel.write_text("Do not delete the output parent")
         self.agent.prepare_startup()
-        self.assertTrue(existing.exists())
+        self.assertFalse(existing.exists())
+        self.assertTrue(output.is_dir())
+        self.assertTrue(sentinel.exists())
+        self.assertEqual(output.stat().st_mode & 0o777, 0o700)
+        self.assertEqual(self.storage.sqlite_path.stat().st_mode & 0o777, 0o600)
+
+    def test_output_is_not_cleared_for_threads_or_repeated_preparation(self):
+        self.agent.prepare_startup()
+        output = self.agent.config.recording.directory / "sentinel.txt"
+        output.write_text("Disposable output")
+        self.turn("Tell me about parking", "one")
+        self.turn("Tell me about parking", "two")
+        self.agent.prepare_startup()
+        self.assertTrue(output.exists())
+        self.agent.finish_shutdown()
+        self.agent.prepare_startup()
+        self.assertFalse(output.exists())
+
+    def test_recording_reset_or_mcp_failure_prevents_serving_and_can_recover(self):
+        for owner, method, stage in (
+            (self.agent.recording_writer, "reset_output_directory", "recording output reset"),
+            (self.agent.recording_client, "check_ready", "recording MCP readiness"),
+        ):
+            with self.subTest(stage=stage):
+                with (
+                    patch.object(owner, method, side_effect=RuntimeError("private/path")),
+                    self.assertRaisesRegex(RuntimeError, stage) as error,
+                ):
+                    self.agent.prepare_startup()
+                self.assertFalse(self.agent.startup_ready)
+                self.assertNotIn("private/path", str(error.exception))
+        self.agent.prepare_startup()
+        self.assertTrue(self.agent.startup_ready)
 
 
 class SuggestionTests(ParkingFixture):

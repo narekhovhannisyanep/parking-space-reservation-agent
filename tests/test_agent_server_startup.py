@@ -147,6 +147,14 @@ class AgentServerStartupTests(unittest.TestCase):
                         assert not state()["tasks"]
                         row = app.parking_agent.reservation_store.get(request_id, thread_id)
                         assert row is not None and row.status == "approved" and row.approval_time is not None
+                        assert "Recorded successfully" in result["messages"][-1]["content"], result
+                        assert state()["values"]["recording"]["status"] == "recorded"
+                        files = list(app.parking_agent.config.recording.directory.glob("*.txt"))
+                        assert len(files) == 1, files
+                        assert files[0].read_text() == (
+                            f"Demo Tester | my bicycle | {row.request.start.isoformat()} to "
+                            f"{row.request.end.isoformat()} | {row.approval_time.isoformat()}\\n"
+                        )
                         assert len(review_calls) == 1, review_calls
                         assert app.parking_agent._llm_client is None
                     assert not app.parking_agent.startup_ready

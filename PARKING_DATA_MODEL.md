@@ -175,24 +175,50 @@ the configured administrator-composition model and remain visible in private SQL
 Studio, checkpoints, and debug data. Public model copies/streams retain the privacy
 boundaries described in README; raw administrator model tokens use `nostream`.
 
-## Approved file recording (Stage 3 not implemented)
+## Approved file recording (Stage 3 implemented)
 
 Only human-approved reservations may be written as:
 
 `Name | Car Number | Reservation Period | Approval Time`
 
-Collect both first name and surname for `Name`; exact rendering and output-file
-layout remain to be chosen with the recording implementation. Pending/refused
-requests are not approved records. Approval is not proof that recording succeeded.
-The recording service must meet the assignment's security and reliability requirements.
+`Name` is first name + one space + surname. The period is the original UTC ISO start
+`to` UTC ISO end; approval is the original human approval instant rendered in UTC.
+Each approved request has one UTF-8 `.txt` file with one line, named by SHA-256 of
+its internal request ID. No space/request ID or extra column is included in the entry.
+Pending/refused/elapsed requests are not approved records. Approval is not proof that
+recording succeeded; recording after end is allowed for a previously valid approval.
 
 SQLite is the authoritative operational reservation state. The Stage 3 file is an
 approved-only output, not another source to synchronize/read for allocation. A failed
 file write retains approval and allocation in SQLite and must be reported explicitly.
-The dedicated disposable `.data/approved-reservations/` output directory will be
-dropped/recreated at startup during Stage 3; that cleanup is not implemented yet.
-Approval reversal is out of scope. Output-file layout and retries remain undecided.
+The dedicated disposable directory is `approved-reservations/` beside configured
+SQLite (`.data/approved-reservations/` by default), dropped/recreated only at server
+startup. Path/symlink/overlap checks protect the parent and persistent Chroma. Output
+directories are owner-only `0700`; SQLite and generated files are `0600`.
 
-MCP implementation (or the documented permitted fallback), output-file layout, retries,
-and practical access protection remain to be agreed. Full-pipeline integration and load
-tests follow in Stage 4. Stage 2 offline tests are not live-provider/Studio validation.
+The official Python SDK serves a private stdio MCP tool taking only internal
+`request_id`/`thread_id`. The server reads existing SQLite in read-only mode, checks
+approved status and canonical consistency, and owns validation/formatting/publication.
+It accepts no body, approval flag, or arbitrary output path. Atomic no-overwrite
+publication and matching-content replay provide idempotent file effects, not exactly-once
+message delivery. Files are checked only for recording replay, never allocation.
+
+Internal thread state adds `recording` (a JSON `RecordingResult`) and
+`recording_requested`. The result has `status` (`recorded`, `failed`, `unconfirmed`),
+`request_id`, optional successful `filename`, optional safe `error_code`, `retryable`,
+and `attempts` (1–2). It contains no personal fields or raw protocol/exception data.
+These are recording outcomes, not new ledger statuses/fields. `/new` clears them.
+
+The client makes one initial attempt plus at most one transient-failure retry;
+`/retry-recording` repeats only recording for the current approved failed/unconfirmed
+request before `/new`. Invalid/permanent failures are not automatically retried.
+Timeouts/post-publication failure can leave a file without an acknowledged success;
+report unconfirmed output honestly and rely on idempotent retry. Approval reversal,
+background retries, file-to-SQLite synchronization and cross-restart recovery are out
+of scope. Missing ledger rows after reset cannot be reconstructed from checkpoints/files.
+
+Protection is the selected trusted-local process/OS boundary, not separate human
+authentication or a sandbox. See README for primitives, failure behavior and limitations.
+Actual stdio and Agent Server integration, replay, concurrent writing, failure and
+cleanup tests are implemented; full-system load testing remains Stage 4. These offline
+checks use synthetic data/injected models, not live-provider/browser accuracy evidence.

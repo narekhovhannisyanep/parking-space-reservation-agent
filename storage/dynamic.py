@@ -1,6 +1,7 @@
 """Public SQLite snapshots; private reservations use a separate table/helper."""
 
 import json
+import os
 import sqlite3
 from collections.abc import Generator
 from contextlib import closing, contextmanager
@@ -96,6 +97,9 @@ class DynamicParkingStore:
                         "CREATE INDEX IF NOT EXISTS reservation_periods ON parking_reservations "
                         "(location_id, space_id, status, start_at, end_at)"
                     )
+                # This database also contains private submitted reservation data.
+                # Keep it owner-only; SQLite journals inherit the database mode.
+                os.chmod(self.config.sqlite_path, 0o600)
                 self._initialized = True
 
     def reset(self) -> None:

@@ -24,8 +24,9 @@
 - **New dependencies:** before adding a third-party package, explain what problem it
   solves, why it is needed, and relevant alternatives or trade-offs, then obtain the
   user's approval. Approval of a behavior does not automatically approve a new package.
-- Stage 2 submission/holds/administrator review are now selected and implemented below.
-  Stage 3 recording remains separate; discuss its remaining choices before implementing it.
+- Stages 1–3 are selected and implemented below. Stage 4 full-system load testing
+  and final assignment validation/documentation remain; discuss that test slice before
+  expanding scope or adding dependencies.
 
 ## Required outcomes
 
@@ -94,15 +95,37 @@ as code are extra-credit artifacts; see the baseline for details.
   reversal is not in scope. Human approval and successful file writing remain separate
   outcomes. If file writing fails, retain the human-approved reservation and its
   applicable allocation in SQLite, explicitly report recording failure, and never
-  claim the file was written. Retry behavior remains to be agreed during Stage 3.
+  claim the file was written. The selected policy is one initial recording attempt plus
+  at most one transient-failure retry, then `/retry-recording` for the current approved
+  request before `/new`; no background retries or cross-startup recovery.
 - **Recording output cleanup:** `.data/approved-reservations/` is dedicated entirely to
   disposable generated recording output. Drop/recreate that directory at application
   server startup alongside the SQLite reset; do not require a manifest of generated
   files. Keep deletion confined to this dedicated directory, never its parent or the
-  static database. Single-file versus per-reservation output remains undecided. This
-  choice may be revisited if Stage 3 reveals a concrete need, not hypothetical future
-  requirements; do not implement recording or its cleanup in the startup/suggestions
-  change.
+  static database. Per-reservation UTF-8 `.txt` files are selected, named by SHA-256 of
+  the internal request ID. The dedicated directory is beside configured SQLite
+  (`.data/approved-reservations/` by default); an explicit SQLite-path override relocates
+  it too, so temporary test deployments never clear real project output.
+- **Stage 3 MCP:** the user approved the official `mcp` SDK (locked to 2.3.0) and a
+  custom private **stdio** server, not HTTP/FastAPI or the permitted function-call
+  fallback. Python calls exactly one narrow `record_approved_reservation` tool with
+  internal request/thread IDs. No LLM tool-selection adapter, arbitrary body/path/file
+  argument or approval flag. The server independently reads existing SQLite in read-only
+  mode, verifies approved status/canonical details and owns the four-field format: full
+  name, vehicle identifier, original UTC start/end, original UTC approval instant.
+  Atomic no-overwrite publication and matching-content replay provide idempotent file
+  effects, not exactly-once delivery. Bounded output replay checks are not allocation
+  or ledger synchronization. Conflicts, unsafe paths/links and non-approved rows fail
+  closed; only a validated success receipt permits a recorded-success reply.
+- **Recording protection:** fixed Python subprocess command, no shell/network listener,
+  provider-key inheritance or child `.env` loading. Owner-only output directories
+  (`0700`), output/temporary files and SQLite (`0600`); cleanup is symlink-resistant and
+  directory-descriptor scoped. The tested deployment is Linux with local POSIX primitives;
+  unsupported primitives fail closed. Attempts have a 15-second deadline plus bounded
+  SDK cleanup. Timeout/cancellation closes subprocesses and diagnostic handles. Expected
+  errors/SDK exception groups are sanitized; genuine programming errors/cancellation
+  propagate. This is trusted-local protection, not a sandbox, separate human authentication,
+  or confidentiality from the trusted account/root/Studio/debug APIs.
 - **Stage 2 submission/holds:** confirm details, request `/options`, then select one
   currently offered ID with `/submit SPACE_ID`. Python atomically rechecks public
   overrides and period overlap and inserts a pending SQLite hold before review.
@@ -170,8 +193,10 @@ as code are extra-credit artifacts; see the baseline for details.
   without a code or provider change; this does not establish live-model accuracy.
 - Current graph starts with `reservation_collection`; information/options use
   `context_augmentation → parking_assitant`. Successful submission emits the pending
-  reply, then runs `administrator_agent → administrator_review` (typed Studio interrupt)
-  and returns to `parking_assitant` for the actual outcome. Invalid human values loop
+  reply, then runs `administrator_agent → administrator_review` (typed Studio interrupt).
+  Approved review runs `record_approved_reservation` before `parking_assitant`
+  reports both outcomes. Refused/elapsed/unavailable review bypasses recording.
+  Invalid human values loop
   to a fresh review interrupt. Model preparation and review are separate checkpointed
   nodes, so human resume does not regenerate communication or create another hold.
 - Chroma static retrieval and SQLite JSON snapshot CRUD are implemented and graph-wired.
@@ -218,7 +243,29 @@ as code are extra-credit artifacts; see the baseline for details.
   fields. Statuses are pending/approved/refused/elapsed. Stable `draft_id:revision`
   identity prevents duplicate/reallocated holds; write locking precedes eligibility
   reads. Startup clears both tables; old submitted checkpoints report missing requests
-  rather than resurrect them. No Stage 3 file output/cleanup is implemented.
+  rather than resurrect them. Stage 3 adds separate approved-only output/cleanup, not
+  new recording fields/statuses in the operational ledger.
+- `recording.py` owns output configuration, strict schemas, read-only canonical approval
+  checks, formatting and atomic no-overwrite writes. It reuses submitted-request validation;
+  pipes/control characters cannot inject fields/lines, Unicode/non-plate identifiers are
+  preserved and valid prior approvals can be recorded after end. Replay leaves one complete
+  file; conflicts and temporary-name collisions cannot overwrite/delete another writer's data.
+- `recording_server.py` uses the official low-level SDK to expose exact extra-forbidden
+  arguments and structured outcome/error codes. `recording_client.py` owns sync/native-async
+  short-lived stdio sessions, startup schema validation, at most one transient retry and
+  safe receipts. In-process MCP factories keep most offline graph fixtures fast; actual
+  stdio is tested separately and through Agent Server. No raw MCP personal fields or
+  exception/protocol contents enter recording checkpoint data or replies.
+- The graph keeps `recording` as a JSON `RecordingResult` (recorded/failed/unconfirmed,
+  identity, optional filename/error code, retryability, attempts) and `recording_requested`
+  for explicit retry routing. `/new` clears the receipt. Failures preserve approval and
+  allocation; transport/post-publication uncertainty is explicit. A later ledger read
+  failure does not incorrectly claim no human decision was applied. No ordinary-chat
+  auto-retry, background worker, approval reversal or period/timestamp shift is added.
+- Startup validates recording paths before destructive resets, recreates the dedicated
+  directory after SQLite reset, checks read-only ledger/private output and real stdio
+  schemas, then prepares baseline evidence before serving. New threads/turns do not
+  clear output. Imports do not launch MCP or create output directories.
 - `administrator_agent.py` uses its own lazy LangChain structured-output runnable
   and prompt on the existing Azure/DIAL client. It receives necessary submitted details,
   not chat history. Generated wording omits interface names and request facts; Python
@@ -263,44 +310,41 @@ as code are extra-credit artifacts; see the baseline for details.
   the model) are documented, not tuned, to avoid overfitting the small labeled set.
 - Offline tests cover storage, graph integration, draft collection, retrieval topics
   and evaluation harness. Required load tests are not complete (Stage 4).
-- Stages 1–2 are implemented; optional retrieval tuning remains possible. Stage 2 has
+- Stages 1–3 are implemented; optional retrieval tuning remains possible. Stage 2 has
   offline sync/async interrupt/resume, concurrency, temporal, refusal, reset, replay and
   actual model-stream boundary tests. A network-blocked real Agent Server test verifies
   the decision-only schema served to Studio, empty-response retry and approval; the
   current extraction/administrator model schemas also have successful live smoke checks.
   The user reported successful VPN-connected manual Studio testing on 2026-10-31;
   individual browser scenarios were not itemized or independently checked by the coding agent.
-  Stages 3–4 remain incomplete: MCP/file recording and full-pipeline/load tests.
+  Stage 3 has 16 writer, 11 MCP and 9 recording-graph tests covering actual stdio,
+  concurrent/replayed writes, invalid/unauthorized calls, failure before/after publication,
+  grouped SDK errors, timeout/cancellation process/handle cleanup and manual retry.
+  The network-blocked real Agent Server test now verifies decision-only resume followed
+  by actual stdio MCP, exact file contents and final reply. The full offline run completed
+  319 tests (4 opt-in live checks skipped) on 2026-10-31. These use synthetic data/injected
+  models, not new browser/live-provider accuracy or full-system load evidence.
+  Stage 4 load testing and final assignment validation/documentation remain incomplete.
 
 ## Next-session handoff
 
-- **Where we stopped:** Stages 1–2 use duration-only immediate reservations: names,
-  vehicle identifier, hours → confirmed details →
-  `/options` → `/submit SPACE_ID` → atomic private SQLite hold → second LangChain
-  communication agent → decision-only typed Studio human review → code-controlled outcome reply.
-  The administrator reviews the fields and chooses approve/refuse → Resume; no request
-  ID is copied or constructed. Internal request identity is checked by Python. Studio
-  can flag an empty Decision immediately; no default decision is supplied to hide that.
-  Python fixes the UTC start/end at submission; review waiting consumes the duration,
-  and approval is allowed until end. Missing-field prompts and offline delay/replay/
-  boundary tests are updated. README contains the demo and trusted-local limitations.
-  Four synthetic live smoke checks passed on 2026-10-31 for the current extraction
-  and sync/async administrator model schemas, including accepted wording before fallback.
-  The user reported successful manual Studio testing with the VPN connected; browser
-  scenarios were not itemized or independently checked by the coding agent. Offline
-  tests cover the approval/refusal graph and real Agent Server schema; live smoke tests
-  do not exercise a complete reservation/hold/human-resume pipeline. Stage 2 is ready
-  to wrap up for the selected scope. No static data or provider change was needed;
-  do not erase/reseed populated Chroma.
-- **First action:** agree on the Stage 3 recording slice with the user: MCP implementation
-  (or documented permitted fallback), output-file layout, retries, and practical access
-  protection. Do not substitute REST/email/messenger for the selected Studio administrator
-  channel without user agreement.
-- **Before the recording slice:** settle MCP implementation (or documented permitted
-  fallback), file layout, retries, and access protection. Then implement approved-only
-  recording and dedicated output-directory startup cleanup, preserving SQLite approval
-  and allocation if writing fails. These behaviors are agreed; their detailed wiring
-  is not. Finish full integration and end-to-end/load testing after connecting the flow.
+- **Where we stopped:** Stages 1–3 use duration-only requests → confirmation → `/options`
+  → `/submit SPACE_ID` → atomic SQLite hold → second LangChain communication agent →
+  decision-only typed Studio review → approved-only stdio MCP → code-controlled outcome.
+  No human request-ID copying or default decision. Period starts at submission; waiting
+  counts. Valid prior approval is retained if recording fails; `/retry-recording` repeats
+  only current-request recording before `/new`. Output directory is deliberately reset
+  alongside SQLite on next startup; old checkpoints cannot resurrect rows/files.
+  Stage 3's transport/layout/retry/protection choices are settled and implemented. README
+  documents the demo, errors, Linux/OS boundary and test evidence. No provider or static
+  data change was needed; do not erase/reseed populated Chroma. Existing Stage 2 live
+  smoke/user-reported demo evidence remains limited as described above; no new live-model
+  full-pipeline or browser demo was claimed during Stage 3 implementation.
+- **First action:** agree on Stage 4's focused end-to-end/load test scenarios and practical
+  metrics for dialogue, administrator confirmation and recording, then finish assignment
+  documentation/submission. Do not add a production platform or substitute another
+  administrator channel. An optional manual Stage 3 Studio demo is validation, not a
+  missing feature or prerequisite to the implemented recording slice.
 - Preserve the existing offline startup, storage, retrieval, and draft tests. Obtain
   approval before adding any dependency, and keep setup/status documentation aligned
   with each implemented slice. Inspect actual git status rather than assuming changes
@@ -311,17 +355,15 @@ as code are extra-credit artifacts; see the baseline for details.
 - Optional: tune retrieval weak spots listed in RAG_EVALUATION.md and re-measure.
   Broaden privacy evaluation as needed; the synthetic detector report is not complete confidentiality,
   authorization, or live-model correctness.
-- Choose MCP implementation (or permitted fallback), output-file layout and retry
-  behavior, and the practical access protection needed by the recording service.
-- Connect the implemented code-controlled administrator approval to recording.
-  A user acknowledgment is not administrator approval; pending
-  or refused requests must not be recorded, and approval alone does not prove a write.
+- Preserve the selected Stage 3 MCP/layout/retry/protection behaviors. A user acknowledgment
+  is not human approval; pending/refused/elapsed requests cannot be recorded, and approval
+  alone does not prove a successful write. Keep SQL approval/allocation intact on failures.
 - Retain startup readiness, static reuse/seeding, SQLite reset, three-option suggestions,
   and their offline tests when implementing subsequent workflow stages.
 - Preserve Stage 2's accepted explicit-submit, period, refusal, waiting, reset, and
   replay rules and its offline/live smoke checks. Additional itemized browser scenarios
   are optional validation, not an unimplemented Stage 2 feature.
-- Finish integration/load tests and assignment documentation. Do not create a backlog
+- Finish full-system validation/load tests and assignment documentation. Do not create a backlog
   of hypothetical production UI, tenancy, scaling, observability, or infrastructure work.
 
 ## Development practice

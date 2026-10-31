@@ -42,6 +42,8 @@ from context_augmentation import (
     retrieve_context,
 )
 from guardrails import SAFE_REPLY, GuardrailError, PrivacyGuard, guarded_model_config
+from recording import ApprovedReservationWriter, RecordingConfig, RecordingError, RecordingResult
+from recording_client import MCPRecordingClient
 from reservation_collection import (
     EXTRACTION_FAILURE,
     ReservationExtraction,
@@ -85,6 +87,8 @@ class ParkingState(ParkingMessages):
     submission: dict = field(default_factory=dict)
     administrator_payload: dict = field(default_factory=dict)
     review_retry: bool = False
+    recording: dict = field(default_factory=dict)
+    recording_requested: bool = False
 
 
 @dataclass(frozen=True)
@@ -99,9 +103,11 @@ class AgentConfig:
     max_retries: int = 2
     extraction_method: Literal["function_calling", "json_schema"] = "function_calling"
     storage: StorageConfig = field(default_factory=StorageConfig)
+    recording: RecordingConfig = field(init=False)
     context: ContextConfig = field(default_factory=ContextConfig)
 
     def __post_init__(self) -> None:
+        object.__setattr__(self, "recording", RecordingConfig.from_storage(self.storage))
         if self.extraction_method not in {"function_calling", "json_schema"}:
             raise ValueError("PARKING_EXTRACTION_METHOD must be function_calling or json_schema.")
 
@@ -145,6 +151,7 @@ class ParkingSpaceReservationAgent:
         privacy_guard: PrivacyGuard | None = None,
         reservation_store: ReservationStore | None = None,
         administrator_composer: Runnable | None = None,
+        recording_client: MCPRecordingClient | None = None,
     ) -> None:
         self.config = config if config is not None else AgentConfig.from_environment()
         self._llm_client = llm_client
@@ -176,6 +183,10 @@ class ParkingSpaceReservationAgent:
         self.administrator_agent = AdministratorAgent(
             composer_factory=self._get_administrator_composer, privacy_guard=self.privacy_guard
         )
+        self.recording_writer = ApprovedReservationWriter(self.config.recording)
+        self.recording_client = (
+            recording_client if recording_client is not None else MCPRecordingClient(self.config.recording)
+        )
         self.graph = self._build_graph(checkpointer)
 
     def prepare_startup(self) -> None:
@@ -183,13 +194,22 @@ class ParkingSpaceReservationAgent:
         with self._startup_lock:
             if self.startup_ready:
                 return
-            stage = "local privacy model preparation"
+            stage = "recording path validation"
             try:
+                # Validate runtime paths before any destructive database/output
+                # reset (including a symlink created after graph construction).
+                self.config.recording.validate_paths()
+                stage = "local privacy model preparation"
                 self.privacy_guard.prepare()
                 stage = "static database initialization/seeding"
                 self.static_store.initialize()
                 stage = "dynamic database reset"
                 self.dynamic_store.reset()
+                stage = "recording output reset"
+                self.recording_writer.reset_output_directory()
+                stage = "recording MCP readiness"
+                self.recording_writer.check_ready()
+                self.recording_client.check_ready()
                 stage = "baseline context retrieval"
                 ids = self.static_store.list_space_ids(self.config.context.location_id)
                 if not ids:
@@ -206,7 +226,7 @@ class ParkingSpaceReservationAgent:
                 # Do not expose raw provider exceptions, paths, or credentials.
                 raise RuntimeError(
                     f"Parking startup failed during {stage}. Check storage paths, embedding configuration, "
-                    "seed data, local privacy model installation, and PARKING_LOCATION_ID before restarting."
+                    "seed data, local privacy model installation, recording permissions/MCP, and PARKING_LOCATION_ID before restarting."
                 ) from None
             self._baseline_documents = documents
             self.baseline_context = context
@@ -344,7 +364,7 @@ class ParkingSpaceReservationAgent:
         return value
 
     @staticmethod
-    def _outcome_reply(row: ReservationRecord | None) -> str:
+    def _outcome_reply(row: ReservationRecord | None, recording: dict | None = None) -> str:
         if row is None:
             return "This request is unavailable after the startup reset. No approval can be applied. Use /new for a new request."
         prefix = f"Request {row.request_id}, space {row.space_id}: "
@@ -357,11 +377,30 @@ class ParkingSpaceReservationAgent:
                 + "The space is held, but not approved or recorded. Your hours have started; waiting for review counts toward them. Review in Studio Graph mode. Editing/cancellation is unavailable while waiting."
             )
         if row.status == "approved":
+            try:
+                receipt = RecordingResult.model_validate(recording or {})
+            except ValidationError:
+                receipt = None
+            if receipt is not None and receipt.request_id != row.request_id:
+                receipt = None
+            if receipt is not None and receipt.status == "recorded":
+                recording_reply = f"Recorded successfully to {receipt.filename}. Use /new for a separate request."
+            else:
+                recording_reply = (
+                    f"Recording failed ({receipt.error_code}). "
+                    if receipt is not None and receipt.status == "failed"
+                    else "File recording could not be confirmed. A file may already exist; retrying is safe and will not duplicate it. "
+                )
+                recording_reply += (
+                    "Human approval and the allocation are unchanged. Check the local recording service, then send "
+                    "/retry-recording for this request before /new."
+                )
             return (
                 prefix
                 + f"approved by the human administrator at {row.approval_time.isoformat() if row.approval_time else ''}. "
                 + period
-                + "The space remains allocated for this period. This reservation has not been recorded to a file; Stage 3 recording is not implemented. Use /new for a separate request."
+                + "The approved allocation is retained for this period. "
+                + recording_reply
             )
         if row.status == "refused":
             return (
@@ -380,12 +419,38 @@ class ParkingSpaceReservationAgent:
             row = self.reservation_store.get(state.submission["request_id"], self._thread_id(config))
             if command.lower() == "/new" and (row is None or row.status != "pending"):
                 updates = self._collection_result(state, "/new", ReservationExtraction())
-                return {**updates, "submission": {}, "administrator_payload": {}}
+                return {
+                    **updates,
+                    "submission": {},
+                    "administrator_payload": {},
+                    "recording": {},
+                    "recording_requested": False,
+                }
+            if (
+                command.lower() == "/retry-recording"
+                and row is not None
+                and row.status == "approved"
+                and (state.recording.get("request_id") != row.request_id or state.recording.get("status") != "recorded")
+            ):
+                return {
+                    "recording_requested": True,
+                    "reservation_reply": "",
+                    "retrieval_context": "",
+                    "refresh_options": False,
+                }
             return {
-                "reservation_reply": self._outcome_reply(row),
+                "reservation_reply": self._outcome_reply(row, state.recording),
                 "retrieval_context": "",
                 "refresh_options": False,
                 "submission": row.checkpoint() if row else {**state.submission, "status": "unavailable"},
+                "recording_requested": False,
+            }
+        if command.lower() == "/retry-recording":
+            return {
+                "reservation_reply": "Only a current human-approved reservation can be recorded. Collect and submit a request first.",
+                "retrieval_context": "",
+                "refresh_options": False,
+                "recording_requested": False,
             }
         if command.lower() == "/options":
             return {
@@ -435,6 +500,8 @@ class ParkingSpaceReservationAgent:
             "retrieval_context": "",
             "refresh_options": False,
             "administrator_payload": {},
+            "recording": {},
+            "recording_requested": False,
         }
 
     def _reservation_collection(self, state: ParkingState, config: RunnableConfig) -> dict:
@@ -495,7 +562,11 @@ class ParkingSpaceReservationAgent:
             return self._collection_result(state, text, None)
         return self._collection_result(state, safe_text, result)
 
-    def _route_collection(self, state: ParkingState) -> Literal["context_augmentation", "parking_assitant"]:
+    def _route_collection(
+        self, state: ParkingState
+    ) -> Literal["context_augmentation", "parking_assitant", "record_approved_reservation"]:
+        if state.recording_requested:
+            return "record_approved_reservation"
         if state.refresh_options:
             return "context_augmentation"
         if (
@@ -581,11 +652,15 @@ class ParkingSpaceReservationAgent:
             return "__end__"
         return "administrator_review" if state.administrator_payload else "administrator_agent"
 
-    def _review_record(self, state: ParkingState, config: RunnableConfig) -> ReservationRecord | None:
+    def _review_record(
+        self, state: ParkingState, config: RunnableConfig, *, recording_phase: bool = False
+    ) -> ReservationRecord | None:
         self._check_startup()
         try:
             return self.reservation_store.get(state.submission["request_id"], self._thread_id(config))
         except (OSError, sqlite3.Error):
+            if recording_phase:
+                raise RecordingError("unavailable") from None
             raise RuntimeError(
                 "Unable to load the administrator request. Check storage and retry; no decision has been applied."
             ) from None
@@ -675,8 +750,75 @@ class ParkingSpaceReservationAgent:
         }
 
     @staticmethod
-    def _route_review(state: ParkingState) -> Literal["administrator_review", "parking_assitant"]:
-        return "administrator_review" if state.review_retry else "parking_assitant"
+    def _route_review(
+        state: ParkingState,
+    ) -> Literal["administrator_review", "parking_assitant", "record_approved_reservation"]:
+        if state.review_retry:
+            return "administrator_review"
+        return "record_approved_reservation" if state.submission.get("status") == "approved" else "parking_assitant"
+
+    def _recording_updates(self, state: ParkingState, row: ReservationRecord | None, result: object = None) -> dict:
+        recording: dict = {}
+        if row is not None and row.status == "approved":
+            try:
+                receipt = RecordingResult.model_validate(result)
+                if receipt.request_id != row.request_id:
+                    raise ValueError("Mismatched recording receipt.")
+            except ValueError:
+                receipt = RecordingError("invalid_response", unconfirmed=True).result(row.request_id)
+            recording = receipt.model_dump(mode="json")
+        return {
+            "submission": row.checkpoint() if row else {**state.submission, "status": "unavailable"},
+            "recording": recording,
+            "recording_requested": False,
+            "reservation_reply": self._outcome_reply(row, recording),
+            "retrieval_context": "",
+            "refresh_options": False,
+        }
+
+    def _record_approved_reservation(self, state: ParkingState, config: RunnableConfig) -> dict:
+        try:
+            row = self._review_record(state, config, recording_phase=True)
+        except RecordingError:
+            return self._recording_read_failure(state)
+        result = None
+        if row is not None and row.status == "approved":
+            try:
+                result = self.recording_client.record(row.request_id, self._thread_id(config))
+            except RecordingError as error:
+                result = error.result(row.request_id)
+        return self._recording_updates(state, row, result)
+
+    async def _arecord_approved_reservation(self, state: ParkingState, config: RunnableConfig) -> dict:
+        try:
+            row = await asyncio.to_thread(self._review_record, state, config, recording_phase=True)
+        except RecordingError:
+            return self._recording_read_failure(state)
+        result = None
+        if row is not None and row.status == "approved":
+            try:
+                result = await self.recording_client.arecord(row.request_id, self._thread_id(config))
+            except RecordingError as error:
+                result = error.result(row.request_id)
+        return self._recording_updates(state, row, result)
+
+    @staticmethod
+    def _recording_read_failure(state: ParkingState) -> dict:
+        # The decision is already checkpointed. A failed read in this later
+        # step must not say "no decision was applied" or revoke its allocation.
+        result = RecordingError("unavailable").result(state.submission["request_id"])
+        return {
+            "recording": result.model_dump(mode="json"),
+            "recording_requested": False,
+            "reservation_reply": (
+                "Human administrator approval was completed before this recording step. "
+                "Recording failed while reading reservation storage; file writing was not attempted. "
+                "This step did not change the approval or allocation. Check storage, then send /retry-recording "
+                "for this request before /new."
+            ),
+            "retrieval_context": "",
+            "refresh_options": False,
+        }
 
     async def _acontext_augmentation(self, state: ParkingState) -> dict:
         # Chroma, embeddings, and SQLite are synchronous; keep them off the server event loop.
@@ -732,11 +874,16 @@ class ParkingSpaceReservationAgent:
         builder.add_node(
             "administrator_review", RunnableLambda(self._administrator_review, afunc=self._aadministrator_review)
         )
+        builder.add_node(
+            "record_approved_reservation",
+            RunnableLambda(self._record_approved_reservation, afunc=self._arecord_approved_reservation),
+        )
         builder.add_edge(START, "reservation_collection")
         builder.add_conditional_edges("reservation_collection", self._route_collection)
         builder.add_edge("context_augmentation", "parking_assitant")
         builder.add_conditional_edges("parking_assitant", self._route_response)
         builder.add_edge("administrator_agent", "administrator_review")
         builder.add_conditional_edges("administrator_review", self._route_review)
+        builder.add_edge("record_approved_reservation", "parking_assitant")
         # Agent Server supplies persistence. Injection is only needed for standalone use/tests.
         return builder.compile(checkpointer=checkpointer)

@@ -22,13 +22,14 @@ reliability, evaluation, and testing remain part of the assignment.
 | --- | --- | --- |
 | 1: RAG/chatbot | Startup-ready Chroma/SQLite stores, 20-record fixture, graph-wired retrieval, three semantic eligibility-filtered options with location-preference terms and "other options" follow-ups, draft collection/validation/user confirmation, layered local privacy guards, synthetic guardrail evaluation, synthetic RAG retrieval/answer/latency evaluation and report | Optional retrieval tuning (see RAG_EVALUATION.md limits) |
 | 2: Human approval | Second LangChain communication agent, explicit submission, SQLite period holds, typed Studio review, approval/refusal and user outcome replies; offline integration/race/replay/streaming tests; live extraction and sync/async administrator smoke checks; user-reported Studio demo | No remaining implementation for the selected Stage 2 scope; verification limits below |
-| 3: Approved recording | File format and Python-owned recording responsibility selected | MCP service (or permitted fallback), access protection, approved-only file writes |
-| 4: Orchestration | Conversation graph and offline integration tests | Complete approval/recording pipeline, end-to-end/load tests, completed usage/deployment documentation |
+| 3: Approved recording | Narrow Python stdio MCP service, read-only approval checks, atomic per-request files, bounded/manual retries, safe outcome replies, private permissions and startup cleanup; real MCP and Agent Server integration tests | No remaining implementation for the selected Stage 3 scope; trusted-local limits below |
+| 4: Orchestration | Connected collection/hold/review/recording graph and offline integration tests, including actual Agent Server endpoints | Full-system load testing, broader end-to-end validation, final assignment documentation/submission |
 
-**Stages 1–2 are implemented; recording is not.** Confirmed details can be submitted
+**Stages 1–3 are implemented.** Confirmed details can be submitted
 for a single offered space, held in SQLite, and approved or refused by a human in
 Studio. User confirmation is not administrator approval; approval is not a successful
-file write. MCP calls and approved-reservation file recording remain Stage 3 work.
+file write. Only SQLite-confirmed human approvals proceed to the MCP recording step;
+the final reply distinguishes approval from recording success/failure.
 
 ## Setup and run
 
@@ -38,7 +39,14 @@ Use Python 3.12 or newer. Install the locked dependencies:
 uv sync --dev
 ```
 
-This also installs the pinned local `en_core_web_sm` English NLP model and
+Stage 3 uses the official `mcp` Python SDK (locked to 2.3.0), without CLI extras,
+LangChain MCP adapters, Node.js, FastAPI, an HTTP listener, or a new API key.
+The tested recording deployment is **Linux with a local POSIX filesystem**: it
+requires owner-only permissions, directory-descriptor/no-follow operations,
+atomic hard links, and symlink-resistant cleanup. Unsupported primitives fail
+closed rather than silently weakening file safety.
+
+The locked project dependencies also include the pinned local `en_core_web_sm` English NLP model and
 `presidio-analyzer`. Imports do not load NLP. Missing/broken privacy setup stops
 startup; detection never downloads models or domain lists at runtime. The small CPU
 model is supplemented by deterministic checks, not a comprehensive multilingual
@@ -70,7 +78,8 @@ an additional public UI is not part of the current scope.
 
 The CLI loads `.env` through `langgraph.json`. Application imports do not load it,
 initialize clients/databases, or make API calls. The configured Starlette lifespan
-prepares databases and bounded baseline evidence **before the server accepts requests**.
+prepares databases, recording output/MCP readiness, and bounded baseline evidence
+**before the server accepts requests**.
 The graph and HTTP app use module exports (`app:agent`, `app:webapp`) to share one agent
 instance. Chat/extraction models remain lazy. First-time static seeding calls the
 configured embedding provider; populated static collections are reused without seeding.
@@ -109,6 +118,9 @@ add a separate public API or UI. Startup waits for both databases and baseline e
 | `reservation_collection.py` | Draft extraction, validation, user confirmation, and cancellation |
 | `administrator_agent.py` | Second LangChain agent: bounded review wording and strict human-decision schema |
 | `storage/reservations.py` | Private SQLite hold ledger, atomic overlap checks, approval/refusal and timestamps |
+| `recording.py` | Read-only canonical approval checks, four-field formatting, safe atomic file publication and dedicated cleanup |
+| `recording_server.py` | Private stdio MCP server exposing only `record_approved_reservation` |
+| `recording_client.py` | Code-selected sync/async MCP calls, bounded sessions/retries and safe receipt/error validation |
 | `guardrails.py`, `guardrail_evaluation.py` | Local privacy boundary checks and reproducible synthetic evaluation |
 | `storage/` | Chroma static inventory, SQLite dynamic facts, configuration, and explicit seeding |
 | `tests/` | Offline storage, graph, collection, and opt-in live-model checks |
@@ -121,8 +133,11 @@ START → reservation_collection
   incomplete request mentioning availability/reservation → context_augmentation → parking_assitant → END
   collection reply → parking_assitant → END
   successful /submit → parking_assitant (pending reply) → administrator_agent
-    → administrator_review (Studio interrupt) → parking_assitant (outcome) → END
+    → administrator_review (Studio interrupt)
+      approved → record_approved_reservation → parking_assitant (approval + recording outcome) → END
+      refused / elapsed / unavailable → parking_assitant (outcome) → END
   invalid administrator response → administrator_review (fresh interrupt)
+  /retry-recording on current approved failed/unconfirmed request → record_approved_reservation → parking_assitant → END
 ```
 
 `parking_assitant` retains the user-selected spelling. The accepted complete
@@ -131,8 +146,9 @@ LLM. The human administrator alone approves; Python owns allocation, reservation
 state, approval enforcement, and file formatting/writing.
 
 The agent owns shared resources, while conversation/request state belongs to graph
-threads. Tests can inject models, extractors, clocks, embeddings, stores, and a
-checkpointer. Direct callers outside Agent Server need a checkpointer for multi-turn
+threads. Tests can inject models, extractors, clocks, embeddings, stores,
+checkpointers, and MCP client factories. Direct callers outside Agent Server need
+a checkpointer for multi-turn
 draft state; the public messages alone do not reconstruct it.
 For standalone startup-ready use, construct with `require_startup=True`, call
 `prepare_startup()` before graph invocation, and `finish_shutdown()` at shutdown.
@@ -151,10 +167,14 @@ At each application-server startup:
 1. Open the configured Chroma collection and **immediately seed** the bundled fixture
    if the collection is missing or empty. Reuse populated collections unchanged;
    do not compare timestamps, fixture contents, or freshness.
-2. Recreate the configured SQLite file and schema empty, removing its old SQLite
-   sidecars as well. This intentionally discards all dynamic facts **and private
+2. Recreate the configured SQLite file and schema empty with owner-only permissions,
+   removing its old SQLite sidecars as well. This intentionally discards all dynamic facts **and private
    pending/approved/refused reservation records** from previous runs.
-3. Read up to three scoped static records and initial dynamic facts, validate them,
+3. Drop/recreate the dedicated `approved-reservations/` output directory alongside
+   SQLite, with owner-only permissions. Verify the read-only ledger/output setup and
+   the MCP tool schemas through a bounded real stdio session. Recording-path checks
+   run before any destructive reset; cleanup never deletes SQLite's parent or Chroma.
+4. Read up to three scoped static records and initial dynamic facts, validate them,
    and prepare bounded baseline JSON evidence before accepting interaction. A missing
    configured location or unusable baseline is a startup error.
 
@@ -165,7 +185,8 @@ SQLite must be outside the persistent Chroma directory to prevent destructive pa
 overlap. The reset deletes only the configured database/sidecars, never their parent.
 Personal reservation details and chats are not ingested into either public-information
 store. Submitted details live in a separate private SQLite table, never public fact
-CRUD or RAG evidence. Recording-directory cleanup is agreed for Stage 3, not implemented here.
+CRUD or RAG evidence. Recording files are private approved-only outputs, never public
+facts or another allocation source.
 
 ### Static inventory and seeding
 
@@ -313,6 +334,11 @@ checks are implemented below, with documented detection limits.
 | `AZURE_OPENAI_EMBEDDING_MODEL` | Existing `TEXT_EMBEDDING_3_SMALL` constant |
 
 Relative paths are anchored to the project root. `.data/` is git-ignored.
+Recording output uses the fixed sibling name `approved-reservations/` beside the
+configured SQLite file: `.data/approved-reservations/` by default. An explicit SQLite
+path override relocates that disposable output too, keeping isolated test deployments
+out of the real project data. There is no chat-selected output path or additional
+recording-path environment variable. Do not put backups or other valuable files there.
 Embedding clients initialize only when embedding is needed; empty searches do not
 require them. Chroma telemetry is disabled.
 
@@ -362,6 +388,7 @@ summary without creating a hold or implicitly confirming/submitting anything.
 | `/new` | Start a new empty draft |
 | `/options` | Show up to three semantic suggestions for a now-based duration preview; overlapping holds are excluded |
 | `/submit SPACE_ID` | Submit one currently offered space for the confirmed duration, starting its pending hold now before administrator review |
+| `/retry-recording` | Retry file recording for the current human-approved failed/unconfirmed request, before `/new`; does not repeat approval or shift the period |
 
 States: `idle`, `collecting`, `awaiting_confirmation`, `ready`, `cancelled`.
 Changes and rejected/unreadable updates invalidate confirmation. `ready` is collected,
@@ -399,8 +426,9 @@ ledger; old submitted checkpoints cannot resurrect a missing request. Chroma is 
    ```
 
 5. The first agent's deterministic reply reports the actual SQLite result. Approval
-   retains the allocation and UTC approval time; refusal releases the hold. Neither
-   path writes a file. Return to Chat in the same thread to see the outcome. Use
+   retains the allocation and UTC approval time, then runs MCP recording; refusal
+   releases the hold without recording. Return to Chat in the same thread to see
+   both approval and recording outcomes. Use
    `/new` **after the decision** for a separate sequential one-space request.
 
 The form has **one required field and no default decision**. Studio may immediately
@@ -492,7 +520,8 @@ live smoke checks. The user also reported successful VPN-connected manual Studio
 that day; individual browser scenarios were not itemized or independently checked by the
 coding agent. This is smoke/demo evidence, not comprehensive live-model accuracy or security
 evaluation.
-Load tests and MCP/file integration remain Stages 3–4 work.
+MCP/file integration is now covered by the Stage 3 tests below. Full-system load
+testing remains Stage 4 work.
 
 ### Model compatibility
 
@@ -510,6 +539,111 @@ no tracing; no pending hold or actual human decision is created):
 ```bash
 LANGSMITH_TRACING=false LANGCHAIN_TRACING_V2=false PARKING_LIVE_TEST=1 \
   uv run --no-sync --env-file .env python -m unittest discover -s tests -p test_reservation_model_live.py -v
+```
+
+## Stage 3: approved recording through MCP
+
+### Normal use
+
+Continue the Stage 2 Studio demo above. After selecting **approve → Resume**, the
+graph runs `record_approved_reservation` automatically—no extra human approval,
+request-ID copying, shell command, or third LLM is needed. A successful final reply
+says **Recorded successfully** and gives the service-generated `.txt` basename.
+Inspect that file locally in `.data/approved-reservations/` (or the sibling of an
+explicitly relocated SQLite database).
+
+Each file contains one UTF-8 line with exactly the required four fields:
+
+`First name Surname | Car Number | UTC start to UTC end | UTC approval time`
+
+The server uses the original submission-time period and human approval instant,
+not its current clock. Recording after the period has ended is still allowed if
+human approval was valid before end. No space ID, request ID, extra column, or model
+wording is added to the entry. Existing single-line field validation rejects pipes
+and control characters; Unicode and non-plate vehicle identifiers are preserved.
+
+### Service and access boundary
+
+- The official Python SDK implements real MCP over private subprocess stdin/stdout.
+  The user selected this instead of an HTTP/FastAPI service; the permitted direct
+  function-call fallback is **not** used. Python graph code selects the tool, not an LLM.
+- The only tool accepts `request_id` and `thread_id`. It accepts no approval flag,
+  reservation body, filename, directory, arbitrary text, or arbitrary-write command.
+  Unknown tools/extra fields are rejected. The human still reviews only Decision in Studio.
+- The server independently opens existing SQLite with `mode=ro`, loads the matching
+  private row, checks actual `approved` status and canonical field/time consistency,
+  and formats the record itself. Missing/corrupt/pending/refused/elapsed records cannot
+  be written; a missing database is never initialized or reconstructed by the recorder.
+- Output names are SHA-256 hashes of internal request identities. Data is flushed
+  and synchronized in a private temporary file, then atomically published without
+  overwriting any existing target. Matching replay succeeds; conflicting contents,
+  unsafe links, and nonregular targets fail. Replay checks bounded output bytes only
+  for deduplication, never for allocation or syncing the ledger from files.
+- Output directories are `0700`; final/temporary files and SQLite are `0600`.
+  Cleanup is directory-descriptor scoped and rejects unsafe paths/storage overlaps.
+  A temporary-name collision never deletes another writer's temporary file.
+- Each attempt launches the fixed Python script without a shell, opens a short-lived
+  MCP session, and closes it. Provider keys are not passed to the child; it does not
+  load `.env`. Stdout is reserved for MCP. Receipts contain bounded identity/status/
+  filename/error codes, not personal fields or raw exception/protocol text.
+
+This is practical **trusted-local** protection, not multi-user administrator
+authentication or an OS sandbox. Thread matching correlates a request, not authenticates
+a human. The trusted account/root can read or alter its private data and code; Studio,
+checkpoints, development APIs, and optional parent tracing retain their existing private
+boundaries. Do not expose the development server or recording data to untrusted users.
+
+### Failures and retries
+
+Approval is committed before recording, with no SQLite write transaction spanning
+MCP/file I/O. The recorder never changes approval or allocation.
+
+| Recording outcome | User-facing behavior |
+| --- | --- |
+| `recorded` | Validated MCP receipt confirms successful recording; report the basename |
+| `failed` | Explicit failure; keep approval/allocation and show retry instructions |
+| `unconfirmed` | Communication/acknowledgment or post-publication failure; a file may exist, so never claim success or claim nothing was written |
+
+The client makes an initial attempt and **at most one retry** for recognized transient
+transport/storage failures. Permanent failures and invalid receipts are not automatically
+retried. Each attempt has a 15-second deadline plus bounded SDK shutdown/cleanup time;
+processes and diagnostic handles are closed even on timeout/cancellation. Cancellation
+propagates, and unexpected programming errors are not hidden as transient failures.
+
+After failure/unconfirmed output, fix the underlying issue and send `/retry-recording`
+in the **same thread before `/new`**. It reloads the current approved request and repeats
+only recording. Already recorded requests return their existing outcome without another
+write; pending/refused/elapsed/missing requests cannot use this command to gain approval.
+Ordinary chat does not repeatedly retry. There is no background retry worker, approval
+reversal, or change to submission/end/approval timestamps. A pre-recording ledger read
+failure explicitly reports that file writing was not attempted in that step; it does not
+incorrectly say that no administrator decision was applied.
+
+Startup intentionally discards both the ledger and generated outputs. Old checkpoints
+cannot resurrect a reset reservation. `/new` clears the current recording receipt and
+starts a separate request; it does not reverse earlier allocations or repair old outputs.
+
+### Stage 3 verification
+
+The offline suite includes 16 writer tests, 11 MCP protocol/client tests and 9 recording
+graph tests. It exercises actual stdio success/replay, stalled-process timeout and native
+cancellation cleanup, strict schemas and unsafe responses (including SDK exception groups),
+concurrent same/different request writes, no partial final entries, collision/link safety,
+failure before/after publication, manual retry, unchanged approval/allocation, Unicode/UTC
+rendering and startup reset. Most graph fixtures use real in-process MCP with injected
+agent models to avoid spawning a subprocess for every fixture.
+
+The network-blocked real Agent Server test now follows collection → hold → decision-only
+Studio-compatible resume → actual stdio MCP → exact recorded file and final reply. This
+uses synthetic data and injected models, not a browser/live-provider accuracy test.
+The full run on 2026-10-31 completed **319 tests, with 4 opt-in live checks skipped**;
+focused checks were also rerun during implementation. Concurrency tests are not the
+assignment's full-system load test.
+
+Run just the recording checks:
+
+```bash
+.venv/bin/python -m unittest discover -s tests -p 'test_recording*.py' -v
 ```
 
 ## Required data protection and recording safety
@@ -548,8 +682,8 @@ on generated space labels, technical numeric IDs, and currency amounts. Arbitrar
 unlabeled vehicle identifiers and unfamiliar/obfuscated PII can be missed. See
 [GUARDRAIL_EVALUATION.md](GUARDRAIL_EVALUATION.md) for results and limitations.
 
-Stage 3 recording-service security/reliability remains unimplemented and required,
-not a reason to build a production security platform.
+Stage 3 adds the narrowly scoped, owner-protected approved-recording service above;
+it does not turn the trusted-local development setup into a production security platform.
 
 Do not put secrets in chat. Inputs go to the configured model provider. Studio and
 checkpoints expose private draft state; public schemas containing only messages do
@@ -558,8 +692,8 @@ values are not changed. Enabled tracing can also store inputs/responses in LangS
 Filtering model copies does not sanitize stored chats or hide checkpoint state.
 Keep the local development server bound to localhost while testing.
 
-The future recording service must receive real human approval, not model-generated
-authority. Pending/refused requests must not be recorded as approved. Required entry:
+The recording service checks real code-recorded human approval, not model-generated
+authority. Pending/refused/elapsed requests cannot be recorded as approved. Required entry:
 `Name | Car Number | Reservation Period | Approval Time`. Python owns the format;
 approval and successful writing are separate results.
 
@@ -604,8 +738,8 @@ Source checks:
 
 ```bash
 uv tool run ty check
-uv tool run ruff check app.py parking_agent.py administrator_agent.py guardrails.py guardrail_evaluation.py rag_evaluation.py reservation_collection.py context_augmentation.py commons storage tests
-uv tool run ruff format --check app.py parking_agent.py administrator_agent.py guardrails.py guardrail_evaluation.py rag_evaluation.py reservation_collection.py context_augmentation.py commons storage tests
+uv tool run ruff check app.py parking_agent.py administrator_agent.py recording.py recording_client.py recording_server.py guardrails.py guardrail_evaluation.py rag_evaluation.py reservation_collection.py context_augmentation.py commons storage tests
+uv tool run ruff format --check app.py parking_agent.py administrator_agent.py recording.py recording_client.py recording_server.py guardrails.py guardrail_evaluation.py rag_evaluation.py reservation_collection.py context_augmentation.py commons storage tests
 ```
 
 ## Next steps
@@ -615,12 +749,11 @@ UTC clock, collecting only duration hours instead of dates/timezone, and actiona
 missing-details prompts instead of the confusing confirmation/approval warning.
 The draft/offer/hold architecture and administrator expiry rules now support this flow.
 
-Finish Stage 3 using the retained choices in AGENTS.md: decide MCP implementation
-(or documented permitted fallback), output-file layout, retries, and practical access
-protection. Preserve the implemented Stage 2 holds and decisions. If recording fails,
-keep human approval and its applicable allocation in SQLite and explicitly report
-the recording failure. Then finish full-pipeline integration/load tests and assignment
-documentation in Stage 4. Do not add expiry timers or production infrastructure.
+Stage 3 is connected and implemented for the selected trusted-local stdio scope.
+Next, agree on and run Stage 4 full-system end-to-end/load scenarios for dialogue,
+human confirmation, and recording, then finish assignment documentation/submission.
+Keep existing Stage 1–3 behavior and offline checks. Do not add expiry timers,
+public production interfaces, or scaling infrastructure.
 
 ## References
 
@@ -632,3 +765,6 @@ documentation in Stage 4. Do not add expiry timers or production infrastructure.
 - [Using Studio](https://docs.langchain.com/langsmith/use-studio)
 - [LangChain Chroma integration](https://docs.langchain.com/oss/python/integrations/vectorstores/chroma)
 - [Python SQLite](https://docs.python.org/3/library/sqlite3.html)
+- [Official MCP Python SDK](https://py.sdk.modelcontextprotocol.io/)
+- [MCP stdio transport](https://modelcontextprotocol.io/specification/2026-07-28/basic/transports/stdio)
+- [MCP local-server security](https://modelcontextprotocol.io/specification/2026-07-28/basic/security_best_practices#local-mcp-server-compromise)

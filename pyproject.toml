@@ -12,6 +12,7 @@ dependencies = [
     "langchain-openai>=1.7.2",
     "langgraph>=1.2.16",
     "langsmith>=0.14.11",
+    "mcp>=2.3.0,<3",
     "notebook>=7.6.3",
     "presidio-analyzer>=2.2.366",
     "python-dotenv>=1.2.4",

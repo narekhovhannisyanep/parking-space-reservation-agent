@@ -16,6 +16,7 @@ from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.types import Command
 from openai import APIError
 from pydantic import ValidationError
+from test_recording_mcp import in_process_recorder
 from test_reservation_storage import END, NOW, START, request, submitted_request
 from test_static_storage import KeywordEmbeddings
 
@@ -101,7 +102,7 @@ class AdministratorAgentTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("private-api-key", str(payload))
 
 
-class AdministratorWorkflowTests(unittest.TestCase):
+class AdministratorWorkflowFixture(unittest.TestCase):
     def setUp(self):
         directory = TemporaryDirectory()
         self.addCleanup(directory.cleanup)
@@ -124,6 +125,7 @@ class AdministratorWorkflowTests(unittest.TestCase):
             checkpointer=InMemorySaver(),
             clock=lambda: self.now,
             require_startup=True,
+            recording_client=in_process_recorder(self.storage),
         )
         self.agent.prepare_startup()
         self.config: RunnableConfig = {"configurable": {"thread_id": "one"}}
@@ -167,6 +169,8 @@ class AdministratorWorkflowTests(unittest.TestCase):
     def decide(self, interrupt, decision="approve", config=None):
         return self.agent.graph.invoke(Command(resume={interrupt.id: {"decision": decision}}), config or self.config)
 
+
+class AdministratorWorkflowTests(AdministratorWorkflowFixture):
     def test_confirmation_and_options_never_submit_or_hold(self):
         self.fill()
         self.options()
@@ -192,10 +196,10 @@ class AdministratorWorkflowTests(unittest.TestCase):
         self.assertEqual(row.status, "approved")
         self.assertEqual(row.approval_time, NOW)
         self.assertIn("approved", result["messages"][-1].content)
-        self.assertIn("not been recorded", result["messages"][-1].content)
+        self.assertIn("Recorded successfully", result["messages"][-1].content)
         self.assertNotIn("__interrupt__", result)
         self.assertEqual(self.composer.invoke.call_count, 1)
-        self.assertFalse((self.storage.sqlite_path.parent / "approved-reservations").exists())
+        self.assertEqual(len(list((self.storage.sqlite_path.parent / "approved-reservations").glob("*.txt"))), 1)
 
     def test_refusal_releases_and_new_request_is_sequential(self):
         interrupt, _space = self.submit()
