@@ -21,7 +21,7 @@ reliability, evaluation, and testing remain part of the assignment.
 | Stage | Implemented | Still needed |
 | --- | --- | --- |
 | 1: RAG/chatbot | Startup-ready Chroma/SQLite stores, 20-record fixture, graph-wired retrieval, three semantic eligibility-filtered options with location-preference terms and "other options" follow-ups, draft collection/validation/user confirmation, layered local privacy guards, synthetic guardrail evaluation, synthetic RAG retrieval/answer/latency evaluation and report | Optional retrieval tuning (see RAG_EVALUATION.md limits) |
-| 2: Human approval | Second LangChain communication agent, explicit submission, SQLite period holds, typed Studio review, approval/refusal and user outcome replies; offline integration/race/replay/streaming tests | Manual live-provider/Studio demonstration has not been verified for this slice |
+| 2: Human approval | Second LangChain communication agent, explicit submission, SQLite period holds, typed Studio review, approval/refusal and user outcome replies; offline integration/race/replay/streaming tests; live extraction and sync/async administrator smoke checks; user-reported Studio demo | No remaining implementation for the selected Stage 2 scope; verification limits below |
 | 3: Approved recording | File format and Python-owned recording responsibility selected | MCP service (or permitted fallback), access protection, approved-only file writes |
 | 4: Orchestration | Conversation graph and offline integration tests | Complete approval/recording pipeline, end-to-end/load tests, completed usage/deployment documentation |
 
@@ -419,7 +419,10 @@ There is no new dependency, environment variable, REST route, public UI, or mail
 The second agent lazily uses the existing Azure/DIAL model with its own LangChain
 structured-output runnable and administrator prompt. It receives only canonical
 submitted details, not chat history, and generates a bounded neutral review message.
-Python supplies the exact review facts. Unsafe/unparseable wording or model API
+Model wording omits interface names and request facts; Python supplies the exact review
+fields and UI instructions separately. This also avoids a local PERSON-detector false
+positive on “Studio” in generated wording without weakening privacy checks.
+Unsafe/unparseable wording or model API
 failures use a fixed review request; wording never supplies decision authority.
 Configuration/unsupported-model failures remain safe errors; the already-created
 hold is retained and the failed graph run can be retried.
@@ -479,21 +482,30 @@ Chroma/SQLite, injected models/embeddings/clocks, strict decision validation, ov
 races, refusal release, restart reset, graph replay after committed writes, and guarded
 model streaming. A network-blocked real Agent Server test also checks the one-field
 interrupt schema served to Studio, empty-response retry and decision-only approval.
-**This slice has not run a live administrator-model call or manually
-verified the Studio form.** Existing Stage 1 live results are not Stage 2 live evidence.
+On **2026-10-31**, four opt-in live smoke checks passed against the configured Azure/DIAL
+endpoint: structured extraction, duration-only multi-turn collection/correction/confirmation,
+and sync/async administrator structured output. The administrator checks inspect parsed
+model output before fallback handling and verify that its wording is accepted while canonical
+review facts remain unchanged. These checks use synthetic data and mocked stores, with tracing
+disabled; approval/refusal graph integration remains covered by offline tests, not these
+live smoke checks. The user also reported successful VPN-connected manual Studio testing
+that day; individual browser scenarios were not itemized or independently checked by the
+coding agent. This is smoke/demo evidence, not comprehensive live-model accuracy or security
+evaluation.
 Load tests and MCP/file integration remain Stages 3–4 work.
 
 ### Model compatibility
 
 `PARKING_EXTRACTION_METHOD` defaults to `function_calling`; `json_schema` is an explicit
 alternative. Actual endpoint support is required; there is no prose-parsing fallback.
-Offline tests do not prove live compatibility. On 2026-10-30 both opt-in synthetic
-smoke checks passed with `function_calling` and `gpt-6.1-sol-2026-09-29` (VPN connected).
-Those checks used the previous scheduled-booking schema. The new duration-only
-extraction schema is covered offline but has not yet been live-verified.
+Offline tests do not prove live compatibility. On 2026-10-31, all four opt-in synthetic
+smoke checks passed for the current duration-only extraction and administrator schemas
+with `function_calling` and `gpt-6-luna-2026-09-22` (VPN connected). No provider change
+or static-data reset/reseeding was needed. See the verification evidence and limits above.
 Live answer accuracy is measured separately in [RAG_EVALUATION.md](RAG_EVALUATION.md).
 
-Opt-in smoke test (synthetic data, mocked public stores, no tracing):
+Opt-in extraction and sync/async administrator smoke tests (synthetic data, mocked stores,
+no tracing; no pending hold or actual human decision is created):
 
 ```bash
 LANGSMITH_TRACING=false LANGCHAIN_TRACING_V2=false PARKING_LIVE_TEST=1 \

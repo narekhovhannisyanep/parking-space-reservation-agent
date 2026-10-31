@@ -1,10 +1,11 @@
-"""Opt-in endpoint compatibility smoke checks using synthetic details and mocked public stores."""
+"""Opt-in extraction/administrator smoke checks using synthetic details and mocked stores."""
 
+import asyncio
 import os
 import unittest
 from collections.abc import Callable
 from dataclasses import replace
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import TypeVar
 from unittest.mock import Mock
 
@@ -13,11 +14,14 @@ from langchain_core.runnables import RunnableConfig
 from langgraph.checkpoint.memory import InMemorySaver
 from openai import APIError
 
+from administrator_agent import AdministratorAgent, ReviewWording
+from guardrails import guarded_model_config
 from parking_agent import AgentConfig, ParkingSpaceReservationAgent
 from reservation_collection import (
     EXTRACTION_FAILURE,
     READY_REPLY,
     ReservationSession,
+    SubmittedReservationRequest,
     extraction_messages,
     parse_extraction,
 )
@@ -98,3 +102,51 @@ class LiveReservationModelTests(unittest.TestCase):
         self.assertNotIn("timezone", state["draft"])
         result = self.safely(lambda: graph.invoke({"messages": [("user", f"/confirm {state['revision']}")]}, config))
         self.assertEqual(result["messages"][-1].content, READY_REPLY)
+
+    def check_live_administrator_review(self, *, asynchronous: bool):
+        start = datetime.now(UTC)
+        request = SubmittedReservationRequest(
+            draft_id="synthetic-administrator-smoke",
+            revision=1,
+            location_id="demo-central",
+            first_name="Demo",
+            surname="Tester",
+            car_number="demo-bicycle-1",
+            duration_hours=1.5,
+            start=start,
+            end=start + timedelta(hours=1.5),
+        )
+        request_id = f"{request.draft_id}:{request.revision}"
+        messages = AdministratorAgent._messages(request, "G-A01", request_id)
+        config = guarded_model_config({})
+        composer = self.safely(self.agent._get_administrator_composer)
+        result = self.safely(
+            lambda: (
+                asyncio.run(composer.ainvoke(messages, config=config))
+                if asynchronous
+                else composer.invoke(messages, config=config)
+            )
+        )
+        # Inspect parsed output BEFORE fallback handling: a visible review alone
+        # does not prove that the real administrator model call succeeded.
+        self.assertTrue(
+            isinstance(result, dict) and result.get("parsing_error") is None,
+            "Live administrator output could not be parsed; raw provider output suppressed.",
+        )
+        wording = self.safely(lambda: ReviewWording.model_validate(result.get("parsed")))
+        payload = self.agent.administrator_agent._payload(request, "G-A01", request_id, result)
+        self.assertTrue(
+            bool(wording.message.strip()) and payload["message"] == wording.message.strip(),
+            "Live administrator wording was rejected by the review guard; fallback would be used.",
+        )
+        self.assertEqual(payload["request"], request.model_dump(mode="json"))
+        self.assertEqual(payload["request_id"], request_id)
+        self.assertEqual(payload["space_id"], "G-A01")
+        self.assertEqual(payload["status"], "pending")
+        self.assertNotIn("approved", payload)
+
+    def test_live_administrator_structured_output_and_canonical_payload(self):
+        self.check_live_administrator_review(asynchronous=False)
+
+    def test_live_async_administrator_structured_output_and_canonical_payload(self):
+        self.check_live_administrator_review(asynchronous=True)

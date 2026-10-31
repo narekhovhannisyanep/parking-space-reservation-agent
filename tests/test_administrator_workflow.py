@@ -62,6 +62,14 @@ class AdministratorAgentTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(payload["message"], "Please approve or refuse the reservation request below.")
                 self.assertEqual(payload["status"], "pending")
 
+    def test_interface_instructions_are_code_owned_not_generated_wording(self):
+        payload = self.admin.prepare(submitted_request(), "G-A01", "draft-1:1", {})
+        prompt = self.composer.invoke.call_args.args[0][0].content
+        self.assertIn("Do not name the review interface", prompt)
+        self.assertNotIn("Studio", prompt)
+        self.assertIn("Decision", payload["instructions"])
+        self.assertIn("Resume", payload["instructions"])
+
     def test_decision_schema_requires_only_an_explicit_human_decision(self):
         schema = AdministratorDecision.model_json_schema()
         self.assertEqual(schema["required"], ["decision"])

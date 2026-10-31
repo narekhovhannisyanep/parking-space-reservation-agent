@@ -221,15 +221,22 @@ as code are extra-credit artifacts; see the baseline for details.
   rather than resurrect them. No Stage 3 file output/cleanup is implemented.
 - `administrator_agent.py` uses its own lazy LangChain structured-output runnable
   and prompt on the existing Azure/DIAL client. It receives necessary submitted details,
-  not chat history. Python owns payload facts and decisions; unsafe/unparseable wording
+  not chat history. Generated wording omits interface names and request facts; Python
+  supplies review fields and UI instructions separately. This avoids the local detector's
+  PERSON false positive on “Studio” without weakening guards. Python owns payload facts
+  and decisions; unsafe/unparseable wording
   or API failure uses a fixed review request. Raw administrator tokens use `nostream`.
   Private payloads, SQLite, checkpoints/debug and Studio remain trusted local data.
   The typed human response has only required `decision`; missing/invalid/extra fields
   reinterrupt without changing SQLite. An internal review/request mismatch fails closed
   before showing/applying a decision. These checks are not administrator authentication.
 - Structured extraction defaults to `function_calling`, with explicit `json_schema`
-  support. Opt-in live smoke checks passed with the earlier scheduled-booking schema
-  on 2026-10-30; the duration-only schema has offline coverage, not live verification.
+  support. Four opt-in synthetic live smoke checks passed on 2026-10-31 with
+  `function_calling` and `gpt-6-luna-2026-09-22` for current duration-only extraction/
+  multi-turn collection and sync/async administrator structured output. The administrator
+  checks inspect parsed output before fallback and verify accepted wording plus unchanged
+  canonical facts. Mocked stores and disabled tracing isolate these checks; they are not
+  live full-workflow, accuracy, load, or security tests.
 - Privacy checks are code-enforced at public ingestion/evidence, model-copy and response
   boundaries using local Presidio/spaCy plus rules/known values. Imports do not load NLP;
   startup prepares it before databases. Missing/broken detection fails closed; runtime
@@ -260,7 +267,9 @@ as code are extra-credit artifacts; see the baseline for details.
   offline sync/async interrupt/resume, concurrency, temporal, refusal, reset, replay and
   actual model-stream boundary tests. A network-blocked real Agent Server test verifies
   the decision-only schema served to Studio, empty-response retry and approval; the
-  live model/browser form has not been manually verified.
+  current extraction/administrator model schemas also have successful live smoke checks.
+  The user reported successful VPN-connected manual Studio testing on 2026-10-31;
+  individual browser scenarios were not itemized or independently checked by the coding agent.
   Stages 3–4 remain incomplete: MCP/file recording and full-pipeline/load tests.
 
 ## Next-session handoff
@@ -275,13 +284,18 @@ as code are extra-credit artifacts; see the baseline for details.
   Python fixes the UTC start/end at submission; review waiting consumes the duration,
   and approval is allowed until end. Missing-field prompts and offline delay/replay/
   boundary tests are updated. README contains the demo and trusted-local limitations.
-  The duration-only schema and decision-only Stage 2 form have not been manually
-  demonstrated in Studio or checked with a live administrator model. Earlier VPN/Studio
-  connectivity and Stage 1 evaluation do not establish that validation. No static data
-  or provider change was needed; do not erase/reseed populated Chroma.
-- **First action:** review Stage 2 behavior/tests with the user and agree on the next
-  slice. A manual Studio demo is possible using the required VPN. Do not substitute
-  REST/email/messenger for the selected Studio channel without user agreement.
+  Four synthetic live smoke checks passed on 2026-10-31 for the current extraction
+  and sync/async administrator model schemas, including accepted wording before fallback.
+  The user reported successful manual Studio testing with the VPN connected; browser
+  scenarios were not itemized or independently checked by the coding agent. Offline
+  tests cover the approval/refusal graph and real Agent Server schema; live smoke tests
+  do not exercise a complete reservation/hold/human-resume pipeline. Stage 2 is ready
+  to wrap up for the selected scope. No static data or provider change was needed;
+  do not erase/reseed populated Chroma.
+- **First action:** agree on the Stage 3 recording slice with the user: MCP implementation
+  (or documented permitted fallback), output-file layout, retries, and practical access
+  protection. Do not substitute REST/email/messenger for the selected Studio administrator
+  channel without user agreement.
 - **Before the recording slice:** settle MCP implementation (or documented permitted
   fallback), file layout, retries, and access protection. Then implement approved-only
   recording and dedicated output-directory startup cleanup, preserving SQLite approval
@@ -304,8 +318,9 @@ as code are extra-credit artifacts; see the baseline for details.
   or refused requests must not be recorded, and approval alone does not prove a write.
 - Retain startup readiness, static reuse/seeding, SQLite reset, three-option suggestions,
   and their offline tests when implementing subsequent workflow stages.
-- Optionally verify the Stage 2 model and Studio review form live; preserve its
-  accepted explicit-submit, period, refusal, waiting, reset, and replay rules.
+- Preserve Stage 2's accepted explicit-submit, period, refusal, waiting, reset, and
+  replay rules and its offline/live smoke checks. Additional itemized browser scenarios
+  are optional validation, not an unimplemented Stage 2 feature.
 - Finish integration/load tests and assignment documentation. Do not create a backlog
   of hypothetical production UI, tenancy, scaling, observability, or infrastructure work.
 
