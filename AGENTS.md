@@ -24,9 +24,10 @@
 - **New dependencies:** before adding a third-party package, explain what problem it
   solves, why it is needed, and relevant alternatives or trade-offs, then obtain the
   user's approval. Approval of a behavior does not automatically approve a new package.
-- Stages 1–3 are selected and implemented below. Stage 4 full-system load testing
-  and final assignment validation/documentation remain; discuss that test slice before
-  expanding scope or adding dependencies.
+- All four stages are implemented for the selected assignment slice. Stage 4's
+  approved local-load plus small-live-smoke validation is documented below. Repository
+  publication/submission is a separate operator action; do not expand scope or add
+  dependencies without a new decision.
 
 ## Required outcomes
 
@@ -178,6 +179,10 @@ as code are extra-credit artifacts; see the baseline for details.
   of the three offered options, and the administrator approves or refuses it.
 - **Sequential reservations:** multiple spaces in one conversation are separate
   sequential one-space requests, not one multi-space request, using `/new` after review.
+- **Stage 4 evidence:** the user selected deterministic local full-workflow load plus
+  a small real Azure/DIAL pipeline smoke slice, not measured live-provider load capacity.
+  Scripted review responses use the existing typed interrupt; Studio remains the human
+  channel. Do not claim human throughput, fresh browser validation, or production readiness.
 
 ## Current implementation, not additional requirements
 
@@ -309,7 +314,15 @@ as code are extra-credit artifacts; see the baseline for details.
   synonyms, one-word topics, exact-ID lookup, not all offered options mentioned by
   the model) are documented, not tuned, to avoid overfitting the small labeled set.
 - Offline tests cover storage, graph integration, draft collection, retrieval topics
-  and evaluation harness. Required load tests are not complete (Stage 4).
+  and evaluation harness. `system_validation.py` supplies explicit, bounded Stage 4
+  scenarios/load/live checks through real localhost TCP Agent Server and actual stdio.
+  Its child uses isolated temporary Chroma/SQLite/output/checkpoints, verifies owned
+  storage paths and readiness, omits offline provider keys and disables tracing. No
+  new public route, deployment service, dependency or administrator channel is added.
+- `storage.__init__` lazily resolves/caches only the public `StaticParkingStore` export.
+  The SQLite-only recorder no longer imports Chroma/provider clients. Public class
+  identity/APIs, seeding/reuse, canonical recording checks and 15-second MCP deadlines
+  are unchanged; dedicated import regressions protect that narrow optimization.
 - Stages 1–3 are implemented; optional retrieval tuning remains possible. Stage 2 has
   offline sync/async interrupt/resume, concurrency, temporal, refusal, reset, replay and
   actual model-stream boundary tests. A network-blocked real Agent Server test verifies
@@ -324,27 +337,40 @@ as code are extra-credit artifacts; see the baseline for details.
   by actual stdio MCP, exact file contents and final reply. The full offline run completed
   319 tests (4 opt-in live checks skipped) on 2026-10-31. These use synthetic data/injected
   models, not new browser/live-provider accuracy or full-system load evidence.
-  Stage 4 load testing and final assignment validation/documentation remain incomplete.
+  Stage 4 now has separate evidence: 11 passing real HTTP/stdio end-to-end scenarios;
+  90 passing local conversations at concurrency 1/5/10, with 45 approved files, no
+  automatic recording retries/errors/overlaps or unreaped recorder children; a ten-way
+  same-space race with one pending winner/nine expected conflicts; and two successful
+  real Azure/DIAL approval/refusal pipeline smoke conversations. Live smoke used
+  current function_calling, gpt-6-luna-2026-09-22 and text-embedding-3-small-1 with
+  real temporary stores/MCP and no fallback review wording. Runs are dated 2026-10-31
+  UTC (2026-11-01 local). See STAGE4_VALIDATION.md for methods/timings and limits:
+  injected load models, scripted review, small samples/shared host, no live-provider
+  load or new browser test, no complete privacy/security/resource-leak certification.
+  The final offline regression run completed 339 tests (335 passed, four opt-in live
+  component checks skipped); the two full-pipeline live checks remain separate evidence.
+  Ruff lint/format and ty checks passed. No dependency, provider, fixture or baseline
+  requirement change was made.
 
 ## Next-session handoff
 
-- **Where we stopped:** Stages 1–3 use duration-only requests → confirmation → `/options`
+- **Where we stopped:** All four stages use duration-only requests → confirmation → `/options`
   → `/submit SPACE_ID` → atomic SQLite hold → second LangChain communication agent →
   decision-only typed Studio review → approved-only stdio MCP → code-controlled outcome.
   No human request-ID copying or default decision. Period starts at submission; waiting
   counts. Valid prior approval is retained if recording fails; `/retry-recording` repeats
   only current-request recording before `/new`. Output directory is deliberately reset
   alongside SQLite on next startup; old checkpoints cannot resurrect rows/files.
-  Stage 3's transport/layout/retry/protection choices are settled and implemented. README
-  documents the demo, errors, Linux/OS boundary and test evidence. No provider or static
-  data change was needed; do not erase/reseed populated Chroma. Existing Stage 2 live
-  smoke/user-reported demo evidence remains limited as described above; no new live-model
-  full-pipeline or browser demo was claimed during Stage 3 implementation.
-- **First action:** agree on Stage 4's focused end-to-end/load test scenarios and practical
-  metrics for dialogue, administrator confirmation and recording, then finish assignment
-  documentation/submission. Do not add a production platform or substitute another
-  administrator channel. An optional manual Stage 3 Studio demo is validation, not a
-  missing feature or prerequisite to the implemented recording slice.
+  Recording choices remain settled. README documents setup, logic, Studio use,
+  trusted-local deployment and repository links; STAGE4_VALIDATION.md documents the
+  completed integration/local-load/live-smoke slice. No provider/static-data change was
+  needed; do not erase/reseed populated Chroma. Small live pipeline checks do not
+  broaden the earlier browser/demo evidence or establish real-provider load capacity.
+- **First action:** inspect actual Git status and the user's next request. If asked,
+  review/commit/publish the completed assignment and use README's repository links
+  for the stage answer fields. Do not stage, commit, push or submit automatically.
+  Optional presentation/CI/retrieval tuning is not missing core implementation;
+  no production platform or replacement administrator channel has been selected.
 - Preserve the existing offline startup, storage, retrieval, and draft tests. Obtain
   approval before adding any dependency, and keep setup/status documentation aligned
   with each implemented slice. Inspect actual git status rather than assuming changes
@@ -359,12 +385,14 @@ as code are extra-credit artifacts; see the baseline for details.
   is not human approval; pending/refused/elapsed requests cannot be recorded, and approval
   alone does not prove a successful write. Keep SQL approval/allocation intact on failures.
 - Retain startup readiness, static reuse/seeding, SQLite reset, three-option suggestions,
-  and their offline tests when implementing subsequent workflow stages.
+  and their offline tests when modifying the workflow.
 - Preserve Stage 2's accepted explicit-submit, period, refusal, waiting, reset, and
   replay rules and its offline/live smoke checks. Additional itemized browser scenarios
   are optional validation, not an unimplemented Stage 2 feature.
-- Finish full-system validation/load tests and assignment documentation. Do not create a backlog
-  of hypothetical production UI, tenancy, scaling, observability, or infrastructure work.
+- Core integration/load validation and assignment documentation are complete for the
+  selected slice. Repository publication/answer-field submission remains an operator
+  action. Do not create a backlog of hypothetical production UI, tenancy, scaling,
+  observability or infrastructure work.
 
 ## Development practice
 
@@ -388,5 +416,6 @@ as code are extra-credit artifacts; see the baseline for details.
   a separate memory instruction file.
 - Setup, commands, and behavior: README.md. Implemented data fields: PARKING_DATA_MODEL.md.
   Synthetic privacy results/limits: GUARDRAIL_EVALUATION.md. RAG evaluation results/
-  limits: RAG_EVALUATION.md.
+  limits: RAG_EVALUATION.md. Full-system validation/load/live-smoke evidence and limits:
+  STAGE4_VALIDATION.md.
   Code style: pyproject.toml. Retain the MIT LICENSE and existing copyright notices.

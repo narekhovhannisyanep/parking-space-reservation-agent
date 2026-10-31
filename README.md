@@ -15,6 +15,7 @@ reliability, evaluation, and testing remain part of the assignment.
 - [PARKING_DATA_MODEL.md](PARKING_DATA_MODEL.md): implemented fields and data boundaries.
 - [RAG_EVALUATION.md](RAG_EVALUATION.md): retrieval/answer/latency evaluation report.
 - [GUARDRAIL_EVALUATION.md](GUARDRAIL_EVALUATION.md): synthetic privacy-detector evaluation.
+- [STAGE4_VALIDATION.md](STAGE4_VALIDATION.md): full-system integration, local load and live pipeline smoke report.
 
 ## Current status
 
@@ -23,9 +24,9 @@ reliability, evaluation, and testing remain part of the assignment.
 | 1: RAG/chatbot | Startup-ready Chroma/SQLite stores, 20-record fixture, graph-wired retrieval, three semantic eligibility-filtered options with location-preference terms and "other options" follow-ups, draft collection/validation/user confirmation, layered local privacy guards, synthetic guardrail evaluation, synthetic RAG retrieval/answer/latency evaluation and report | Optional retrieval tuning (see RAG_EVALUATION.md limits) |
 | 2: Human approval | Second LangChain communication agent, explicit submission, SQLite period holds, typed Studio review, approval/refusal and user outcome replies; offline integration/race/replay/streaming tests; live extraction and sync/async administrator smoke checks; user-reported Studio demo | No remaining implementation for the selected Stage 2 scope; verification limits below |
 | 3: Approved recording | Narrow Python stdio MCP service, read-only approval checks, atomic per-request files, bounded/manual retries, safe outcome replies, private permissions and startup cleanup; real MCP and Agent Server integration tests | No remaining implementation for the selected Stage 3 scope; trusted-local limits below |
-| 4: Orchestration | Connected collection/hold/review/recording graph and offline integration tests, including actual Agent Server endpoints | Full-system load testing, broader end-to-end validation, final assignment documentation/submission |
+| 4: Orchestration | Complete graph, 11 real HTTP/server/stdio scenarios, 90 local load conversations at concurrency 1/5/10, ten-way contention check, two real Azure/DIAL pipeline smoke conversations and measured validation report | No implementation remaining for the selected slice; repository publication/submission is a separate operator action; see report limits |
 
-**Stages 1–3 are implemented.** Confirmed details can be submitted
+**All four stages are implemented and validated for the selected assignment slice.** Confirmed details can be submitted
 for a single offered space, held in SQLite, and approved or refused by a human in
 Studio. User confirmation is not administrator approval; approval is not a successful
 file write. Only SQLite-confirmed human approvals proceed to the MCP recording step;
@@ -36,7 +37,7 @@ the final reply distinguishes approval from recording success/failure.
 Use Python 3.12 or newer. Install the locked dependencies:
 
 ```bash
-uv sync --dev
+uv sync --locked --dev
 ```
 
 Stage 3 uses the official `mcp` Python SDK (locked to 2.3.0), without CLI extras,
@@ -122,6 +123,7 @@ add a separate public API or UI. Startup waits for both databases and baseline e
 | `recording_server.py` | Private stdio MCP server exposing only `record_approved_reservation` |
 | `recording_client.py` | Code-selected sync/async MCP calls, bounded sessions/retries and safe receipt/error validation |
 | `guardrails.py`, `guardrail_evaluation.py` | Local privacy boundary checks and reproducible synthetic evaluation |
+| `system_validation.py`, `STAGE4_VALIDATION.md` | Isolated full-system HTTP/stdio scenarios, local load, opt-in live pipeline smoke and measured report |
 | `storage/` | Chroma static inventory, SQLite dynamic facts, configuration, and explicit seeding |
 | `tests/` | Offline storage, graph, collection, and opt-in live-model checks |
 
@@ -520,8 +522,8 @@ live smoke checks. The user also reported successful VPN-connected manual Studio
 that day; individual browser scenarios were not itemized or independently checked by the
 coding agent. This is smoke/demo evidence, not comprehensive live-model accuracy or security
 evaluation.
-MCP/file integration is now covered by the Stage 3 tests below. Full-system load
-testing remains Stage 4 work.
+MCP/file integration is covered by the Stage 3 tests below. The completed Stage 4
+local load and live pipeline smoke evidence is separate in [STAGE4_VALIDATION.md](STAGE4_VALIDATION.md).
 
 ### Model compatibility
 
@@ -711,6 +713,11 @@ Tests use the standard-library `unittest` framework (the assignment accepts pyte
 unittest), so pytest is not a project dependency. If you install pytest yourself, it
 can also discover and run these `unittest` test cases.
 
+The final Stage 4 offline run completed **339 tests: 335 passed, four opt-in live
+component checks skipped**. The separate two real-provider full-pipeline smoke checks
+also passed. Ruff lint/format and ty checks passed; see STAGE4_VALIDATION.md for dates,
+measured load results and limitations.
+
 Run the synthetic privacy evaluation with `.venv/bin/python -m guardrail_evaluation`.
 It prints case IDs/counts, coverage metrics, and warm detector latency; no files are
 written.
@@ -722,7 +729,8 @@ the VPN and uses temporary stores only:
 uv run --no-sync --env-file .env python -m rag_evaluation --part retrieval  # or --part all
 ```
 
-Neither evaluation is a load test; load testing remains Stage 4 work.
+Neither Stage 1 evaluation is a load test. The completed full-system local load
+and live smoke report is in [STAGE4_VALIDATION.md](STAGE4_VALIDATION.md).
 
 Coverage includes Chroma/SQLite CRUD and persistence, validation/isolation/concurrency,
 startup seeding/static reuse, SQLite reset/failure propagation, real Starlette lifespan,
@@ -732,28 +740,82 @@ collection/confirmation/duration handling, submission-time UTC periods, delayed 
 expiry boundaries, replay stability, public PII rejection, extraction redaction,
 old-draft filtering, local-model readiness, guarded sync/async streaming, request/
 location-term detection, "other options" exclusion, and RAG evaluation metrics/rules.
-It does not establish complete privacy enforcement or completion of load tests.
+It does not establish complete privacy enforcement; Stage 4 load evidence and its
+limits are documented separately.
 
 Source checks:
 
 ```bash
 uv tool run ty check
-uv tool run ruff check app.py parking_agent.py administrator_agent.py recording.py recording_client.py recording_server.py guardrails.py guardrail_evaluation.py rag_evaluation.py reservation_collection.py context_augmentation.py commons storage tests
-uv tool run ruff format --check app.py parking_agent.py administrator_agent.py recording.py recording_client.py recording_server.py guardrails.py guardrail_evaluation.py rag_evaluation.py reservation_collection.py context_augmentation.py commons storage tests
+uv tool run ruff check app.py parking_agent.py administrator_agent.py recording.py recording_client.py recording_server.py system_validation.py guardrails.py guardrail_evaluation.py rag_evaluation.py reservation_collection.py context_augmentation.py commons storage tests
+uv tool run ruff format --check app.py parking_agent.py administrator_agent.py recording.py recording_client.py recording_server.py system_validation.py guardrails.py guardrail_evaluation.py rag_evaluation.py reservation_collection.py context_augmentation.py commons storage tests
 ```
 
-## Next steps
+## Stage 4 validation
 
-**Completed user-requested simplification:** immediate reservations using the server
-UTC clock, collecting only duration hours instead of dates/timezone, and actionable
-missing-details prompts instead of the confusing confirmation/approval warning.
-The draft/offer/hold architecture and administrator expiry rules now support this flow.
+Run the isolated local system scenarios and load profiles:
 
-Stage 3 is connected and implemented for the selected trusted-local stdio scope.
-Next, agree on and run Stage 4 full-system end-to-end/load scenarios for dialogue,
-human confirmation, and recording, then finish assignment documentation/submission.
-Keep existing Stage 1–3 behavior and offline checks. Do not add expiry timers,
-public production interfaces, or scaling infrastructure.
+```bash
+PARKING_LIVE_TEST=0 LANGSMITH_TRACING=false LANGCHAIN_TRACING_V2=false \
+  .venv/bin/python -m system_validation --part offline --sessions 30 --concurrency 1 5 10
+```
+
+Opt-in real Azure/DIAL pipeline smoke (temporary stores, synthetic details, no tracing;
+requires the existing credentials and VPN):
+
+```bash
+LANGSMITH_TRACING=false LANGCHAIN_TRACING_V2=false PARKING_LIVE_TEST=1 \
+  uv run --no-sync --env-file .env python -m system_validation --part live
+```
+
+The CLI prints safe JSON evidence and returns nonzero on failures. It starts an
+owned localhost Agent Server with isolated Chroma/SQLite/output/checkpoints and
+actual stdio MCP. Offline models are stateless fixtures, not measured provider
+performance. Scripted decision-only resumes exercise the existing interrupt, not
+a new administrator channel. Load/live checks stay explicit rather than running
+as part of ordinary unit-test discovery. See [STAGE4_VALIDATION.md](STAGE4_VALIDATION.md)
+for exact methods, timings, failure/retry/restart scenarios, limits and the narrow
+lazy-storage-export fix that avoids loading Chroma/provider clients in the recorder.
+
+## Selected deployment and handoff
+
+Deployment for this assignment is the **Linux/local POSIX LangGraph development
+server plus LangSmith Studio**, not a new cloud/container/production platform:
+
+1. Clone the repository, install the existing lockfile, and configure `.env` as above.
+2. Keep credentials/private data local and tracing disabled; connect the required VPN.
+3. Run one server against each disposable SQLite/output location. Wait for startup
+   readiness before using Studio; missing/empty Chroma requires initial embeddings.
+4. Use the Studio collection → confirmation → `/options` → explicit submission →
+   Graph-mode Decision/Resume flow. Inspect the approved file only after a recorded-success reply.
+5. Stop with Ctrl+C. A new lifespan deliberately resets SQLite and generated output;
+   preserve nothing valuable in the dedicated recording directory. Chroma is reused.
+
+For reproducing concurrent server tests, worker jobs are set explicitly to 10 in
+the harness. The installed CLI's help advertises 10, but its underlying runtime's
+omitted-argument fallback is 1; do not infer concurrent execution from client count.
+The harness verifies actual overlapping node executions. Keep the development
+server on localhost; Studio/state/debug access is trusted, not separate administrator
+authentication. Do not share the same SQLite between server processes.
+
+### Assignment repository links
+
+After explicitly reviewing, committing and publishing the current changes, use this
+same project repository in each stage's answer field; four separate repositories
+are not required by the assignment:
+
+| Stage | Repository |
+| --- | --- |
+| 1 — RAG/chatbot | https://github.com/narekhovhannisyanep/parking-space-reservation-agent |
+| 2 — Human approval | https://github.com/narekhovhannisyanep/parking-space-reservation-agent |
+| 3 — Approved MCP recording | https://github.com/narekhovhannisyanep/parking-space-reservation-agent |
+| 4 — Full workflow/testing | https://github.com/narekhovhannisyanep/parking-space-reservation-agent |
+
+The URL comes from local Git remote configuration. Remote contents/accessibility
+and assignment answer fields were not verified or changed during this validation.
+No commit or push is automatic. Presentation and CI/CD/infrastructure remain optional
+extra credit, not missing core features. Optional retrieval tuning requires a separate
+decision and re-measurement; no production/scaling backlog is implied.
 
 ## References
 

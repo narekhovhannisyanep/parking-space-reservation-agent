@@ -43,8 +43,9 @@ search always retains location/type/schema scope before semantic ranking.
 
 Chroma's default collection is `parking_spaces_v2`. Use a fresh collection when
 moving from an older schema: Chroma merges metadata on upsert. See README for seeding.
-The fixture is space inventory, not complete coverage of all required general
-parking and location questions. That information coverage remains Stage 1 work.
+The fixture is intentionally limited public space/location evidence, not a complete
+facility knowledge base. Hours/prices remain unknown until provided through public
+Python CRUD; see RAG_EVALUATION.md for measured information coverage and limits.
 
 At server startup, missing/empty configured collections are immediately seeded from
 the approved mock fixture. Populated collections are reused unchanged. Static-data
@@ -220,5 +221,8 @@ of scope. Missing ledger rows after reset cannot be reconstructed from checkpoin
 Protection is the selected trusted-local process/OS boundary, not separate human
 authentication or a sandbox. See README for primitives, failure behavior and limitations.
 Actual stdio and Agent Server integration, replay, concurrent writing, failure and
-cleanup tests are implemented; full-system load testing remains Stage 4. These offline
-checks use synthetic data/injected models, not live-provider/browser accuracy evidence.
+cleanup tests are implemented. STAGE4_VALIDATION.md records the completed full-system
+local load and two real-provider pipeline smoke checks. Load uses synthetic data/
+injected models; live smoke does not establish browser accuracy, live-provider load
+capacity, or complete confidentiality. Stage 4 adds no operational data fields or
+file-to-ledger synchronization.

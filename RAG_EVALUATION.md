@@ -139,9 +139,11 @@ a p95 of 0.61 s. Nearly all of that is the embedding round trip; local
 Chroma/SQLite work is a few milliseconds. Seeding the temporary collection with 20
 documents took about 3–5 s.
 
-Every turn makes two sequential model calls: extraction, then answer. Extraction is the
-largest controllable cost. An earlier answer run on the same day saw a 63 s p95 from
-one slow provider response, so provider latency varies.
+Information turns in this historical Stage 1 run made two sequential model calls:
+extraction, then answer. Current deterministic collection/control/outcome turns do
+not always call both models. An earlier answer run on the same day saw a 63 s p95
+from one slow provider response, so provider latency varies. Current full-workflow
+timings are reported separately in STAGE4_VALIDATION.md.
 
 ## Limits
 
@@ -153,6 +155,9 @@ one slow provider response, so provider latency varies.
   Repeated runs can vary.
 - Rule-based answer checks can misjudge paraphrases. They don't measure helpfulness,
   tone or completeness.
-- The suggestion snapshots used here don't model allocation for a requested period.
-  The hold ledger is not implemented.
-- This is not a load test. Concurrency and stage throughput remain Stage 4 work.
+- These measurements preceded the private hold ledger and duration-only workflow.
+  They do not measure current period allocation or approved recording; the ledger
+  is now implemented and validated separately in STAGE4_VALIDATION.md.
+- This historical Stage 1 evaluation is not a load test. Current full-system local
+  concurrency/throughput and live pipeline smoke are reported in STAGE4_VALIDATION.md;
+  those results do not replace the retrieval-quality measurements above.
