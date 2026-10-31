@@ -12,7 +12,7 @@ from openai import APIError
 from pydantic import Field, ValidationError, field_validator
 
 from guardrails import GuardrailError, PrivacyGuard, guarded_model_config
-from reservation_collection import StrictModel, ValidatedReservationRequest, clean_text
+from reservation_collection import StrictModel, SubmittedReservationRequest, clean_text
 from storage.reservations import HumanDecision
 
 ADMINISTRATOR_PROMPT = """You are the administrator-communication agent for parking reservations.
@@ -55,7 +55,7 @@ class AdministratorAgent:
         self.privacy_guard = privacy_guard if privacy_guard is not None else PrivacyGuard()
 
     @staticmethod
-    def _messages(request: ValidatedReservationRequest, space_id: str, request_id: str) -> list:
+    def _messages(request: SubmittedReservationRequest, space_id: str, request_id: str) -> list:
         return [
             SystemMessage(ADMINISTRATOR_PROMPT),
             HumanMessage(
@@ -66,7 +66,7 @@ class AdministratorAgent:
             ),
         ]
 
-    def _payload(self, request: ValidatedReservationRequest, space_id: str, request_id: str, result: object) -> dict:
+    def _payload(self, request: SubmittedReservationRequest, space_id: str, request_id: str, result: object) -> dict:
         message = FALLBACK_REVIEW
         try:
             if isinstance(result, dict) and "parsed" in result:
@@ -95,11 +95,11 @@ class AdministratorAgent:
             "status": "pending",
             "space_id": space_id,
             "request": request.model_dump(mode="json"),
-            "instructions": "Human administrator only: copy request_id and choose approve or refuse. User confirmation is not approval. No file recording is implemented.",
+            "instructions": "Human administrator only: copy request_id and choose approve or refuse. The period started at submission; waiting for review counts toward the requested hours. Approval must arrive before the displayed end. No file recording is implemented.",
         }
 
     def prepare(
-        self, request: ValidatedReservationRequest, space_id: str, request_id: str, config: RunnableConfig
+        self, request: SubmittedReservationRequest, space_id: str, request_id: str, config: RunnableConfig
     ) -> dict:
         try:
             result = self.composer_factory().invoke(
@@ -110,7 +110,7 @@ class AdministratorAgent:
         return self._payload(request, space_id, request_id, result)
 
     async def aprepare(
-        self, request: ValidatedReservationRequest, space_id: str, request_id: str, config: RunnableConfig
+        self, request: SubmittedReservationRequest, space_id: str, request_id: str, config: RunnableConfig
     ) -> dict:
         composer = await asyncio.to_thread(self.composer_factory)
         try:

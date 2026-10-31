@@ -27,6 +27,7 @@ Top-K spaces are not exhaustive inventory. eligibility_scope=requested_period me
 excluded overlapping pending/approved holds for reservation_period_utc. current_observations means
 no validated booking period is available; do not claim period availability. Suggestions never
 allocate capacity, hold a space, approve a request, or record a reservation. Submission rechecks eligibility.
+The requested period is a now-based preview; submission recalculates its start from the server clock.
 Public snapshots alone do not confirm availability for a booking period.
 If previous_offers_excluded is present, the options exclude spaces already offered in this
 conversation; an empty list then means no further alternatives can currently be offered."""

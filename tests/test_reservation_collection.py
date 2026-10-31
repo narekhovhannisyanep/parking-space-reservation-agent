@@ -8,7 +8,6 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock, Mock, patch
 from uuid import UUID
-from zoneinfo import ZoneInfo
 
 from langchain_core.exceptions import OutputParserException
 from langchain_core.messages import AIMessage, HumanMessage
@@ -26,13 +25,14 @@ from reservation_collection import (
     ReservationDraft,
     ReservationExtraction,
     ReservationSession,
+    SubmittedReservationRequest,
     ValidatedReservationRequest,
     advance_collection,
     confirmation_summary,
+    duration_period,
     extraction_messages,
     parse_extraction,
-    resolve_datetime,
-    resolve_timezone,
+    resolve_duration,
     validate_draft,
 )
 from storage import DynamicParkingStore, StaticParkingStore
@@ -43,9 +43,7 @@ DETAILS = {
     "first_name": "Alice",
     "surname": "Smith",
     "car_number": "blue bicycle 7",
-    "start": "2030-06-01 10:00",
-    "end": "2030-06-01 12:00",
-    "timezone": "Asia/Yerevan",
+    "duration_hours": "2",
 }
 
 
@@ -71,7 +69,7 @@ class ContractTests(unittest.TestCase):
         self.assertEqual(session.draft, ReservationDraft())
         self.assertIsNone(session.request)
         UUID(session.draft_id)
-        for field in ("first name", "surname", "vehicle identifier", "start date", "end date"):
+        for field in ("first name", "surname", "vehicle identifier", "how many hours"):
             self.assertIn(field, reply)
 
     def test_schema_rejects_model_authority_and_extra_private_fields(self):
@@ -86,7 +84,7 @@ class ContractTests(unittest.TestCase):
         for invalid in (
             {"updates": [{"field": "car_number", "value": 123}]},
             {"updates": [{"field": "surname", "value": None}]},
-            {"updates": [{"field": "surname", "value": "Smith"}] * 7},
+            {"updates": [{"field": "surname", "value": "Smith"}] * 5},
             ReservationExtraction().model_copy(update={"intent": "approved"}),
         ):
             with self.subTest(invalid=invalid), self.assertRaises(ValidationError):
@@ -159,14 +157,16 @@ class ContractTests(unittest.TestCase):
         self.assertIn("verbatim", messages[0].content)
         self.assertIn("cannot confirm", messages[0].content)
 
-    def test_normalized_contract_requires_aware_ordered_times_and_scoped_location(self):
+    def test_normalized_contract_requires_positive_hours_and_scoped_location(self):
         request, issues = validate_draft(complete_session(), "demo-central", NOW)
         self.assertEqual(issues, [])
         assert request is not None
-        self.assertEqual(request.start, datetime(2030, 6, 1, 6, tzinfo=UTC))
+        self.assertEqual(request.duration_hours, 2)
         for changes in (
-            {"start": datetime(2030, 6, 1)},
-            {"end": request.start},
+            {"duration_hours": 0},
+            {"duration_hours": float("nan")},
+            {"duration_hours": True},
+            {"duration_hours": "2"},
             {"location_id": "../bad"},
             {"revision": True},
             {"surname": ""},
@@ -187,7 +187,7 @@ class ContractTests(unittest.TestCase):
             with self.subTest(state=state), self.assertRaises(ValidationError):
                 ReservationSession.model_validate_json(json.dumps(state))
 
-    def test_session_json_roundtrip_preserves_validated_datetimes_without_custom_objects(self):
+    def test_session_json_roundtrip_preserves_validated_hours_without_custom_objects(self):
         session = complete_session()
         request, issues = validate_draft(session, "demo-central", NOW)
         self.assertEqual(issues, [])
@@ -202,69 +202,41 @@ class ContractTests(unittest.TestCase):
             )
 
 
-class TimeTests(unittest.TestCase):
-    def test_no_implicit_midnight_relative_date_or_timezone(self):
-        for value in ("2030-06-01", "tomorrow morning", "06/01/30 10:00", "10:00", "20300601T1000"):
-            with self.subTest(value=value), self.assertRaises(ValueError):
-                resolve_datetime(value, UTC)
-        with self.assertRaisesRegex(ValueError, "timezone"):
-            resolve_datetime("2030-06-01 10:00", None)
-
-    def test_offsets_and_iana_zones_resolve_and_match_explicit_offsets(self):
-        expected = datetime(2030, 6, 1, 6, tzinfo=UTC)
-        for zone in ("Asia/Yerevan", "UTC+04:00", "+04:00"):
-            with self.subTest(zone=zone):
-                self.assertEqual(resolve_datetime("2030-06-01 10:00", resolve_timezone(zone)), expected)
-                self.assertEqual(resolve_datetime("2030-06-01T10:00+04:00", resolve_timezone(zone)), expected)
-        self.assertEqual(resolve_datetime("2030-06-01T06:00Z", None), expected)
-        with self.assertRaisesRegex(ValueError, "conflicts"):
-            resolve_datetime("2030-06-01T10:00+03:00", ZoneInfo("Asia/Yerevan"))
-
-    def test_unknown_abbreviations_missing_tzdata_and_invalid_offsets_are_errors(self):
-        for zone in ("EST", "CST", "localtime", "Unknown/Zone", "../etc/passwd", "UTC+25:00", "+04:60"):
-            with self.subTest(zone=zone), self.assertRaises(ValueError):
-                resolve_timezone(zone)
-        for value in ("2030-06-01T10:00+04:99", "2030-06-01T10:00-00:00", "2030-02-30T10:00Z"):
-            with self.subTest(value=value), self.assertRaises(ValueError):
-                resolve_datetime(value, None)
-
-    def test_clock_changes_require_disambiguation_and_never_invent_a_local_time(self):
-        zone = ZoneInfo("America/New_York")
-        for value in ("2027-03-14 02:30", "2027-11-07 01:30"):
-            with self.subTest(value=value), self.assertRaisesRegex(ValueError, "ambiguous or nonexistent"):
-                resolve_datetime(value, zone)
-        early = resolve_datetime("2027-11-07T01:30-04:00", zone)
-        late = resolve_datetime("2027-11-07T01:30-05:00", zone)
-        self.assertEqual(late - early, timedelta(hours=1))
-        with self.assertRaisesRegex(ValueError, "conflicts"):
-            resolve_datetime("2027-03-14T02:30-05:00", zone)
-
-    def test_missing_invalid_reversed_equal_and_past_periods_are_not_ready(self):
-        for changes, phrase in (
-            ({"timezone": None}, "timezone"),
-            ({"timezone": "CST"}, "ambiguous abbreviation"),
-            ({"start": "2030-06-01"}, "full YYYY-MM-DD"),
-            ({"end": DETAILS["start"]}, "after start"),
-            ({"end": "2030-06-01 09:00"}, "after start"),
-            ({"start": "2026-10-27 10:00"}, "future"),
-            ({"start": "2030-02-30 10:00"}, "day"),
+class DurationTests(unittest.TestCase):
+    def test_numeric_and_common_word_hours_are_not_model_normalized(self):
+        for value, expected in (
+            ("2 hours", 2),
+            ("1.5", 1.5),
+            ("two", 2),
+            ("half an hour", 0.5),
+            ("one and a half hours", 1.5),
         ):
-            with self.subTest(changes=changes):
-                request, issues = validate_draft(complete_session(**changes), "demo-central", NOW)
+            with self.subTest(value=value):
+                self.assertEqual(resolve_duration(value), expected)
+
+    def test_missing_invalid_or_ambiguous_duration_is_not_ready(self):
+        for value in (None, "0", "-1", "2 to 3", "30 minutes", "tomorrow", "2 days", "NaN"):
+            with self.subTest(value=value):
+                request, issues = validate_draft(complete_session(duration_hours=value), "demo-central", NOW)
                 self.assertIsNone(request)
-                self.assertIn(phrase, " ".join(issues))
+                self.assertTrue(issues)
         with self.assertRaisesRegex(ValueError, "clock"):
             validate_draft(complete_session(), "demo-central", NOW.replace(tzinfo=None))
 
-    def test_explicit_offsets_need_no_extra_timezone_and_utc_comparison_handles_dst(self):
-        request, issues = validate_draft(
-            complete_session(start="2027-11-07T01:45-04:00", end="2027-11-07T01:15-05:00", timezone=None),
-            "demo-central",
-            NOW,
-        )
-        self.assertEqual(issues, [])
+    def test_submitted_contract_requires_aware_times_and_matching_duration(self):
+        request, _ = validate_draft(complete_session(), "demo-central", NOW)
         assert request is not None
-        self.assertEqual(request.end - request.start, timedelta(minutes=30))
+        submitted = SubmittedReservationRequest(**request.model_dump(), start=NOW, end=NOW + timedelta(hours=2))
+        self.assertEqual(SubmittedReservationRequest.model_validate_json(submitted.model_dump_json()), submitted)
+        for changes in ({"start": NOW.replace(tzinfo=None)}, {"end": NOW}, {"end": NOW + timedelta(hours=1)}):
+            with self.subTest(changes=changes), self.assertRaises(ValidationError):
+                SubmittedReservationRequest.model_validate({**submitted.model_dump(), **changes})
+
+    def test_elapsed_hour_arithmetic_crosses_midnight_without_user_timezone(self):
+        now = datetime(2030, 1, 1, 23, 30, tzinfo=UTC)
+        start, end = duration_period(1.5, now)
+        self.assertEqual(start, now)
+        self.assertEqual(end, datetime(2030, 1, 2, 1, tzinfo=UTC))
 
 
 class GraphCollectionTests(unittest.IsolatedAsyncioTestCase):
@@ -317,8 +289,8 @@ class GraphCollectionTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("Provide surname", result["messages"][-1].content)
         self.turn("blue bicycle 7", proposal(car_number="blue bicycle 7"))
         result = self.turn(
-            "2030-06-01 10:00 to 2030-06-01 12:00 Asia/Yerevan",
-            proposal(start=DETAILS["start"], end=DETAILS["end"], timezone=DETAILS["timezone"]),
+            "2 hours",
+            proposal(duration_hours=DETAILS["duration_hours"]),
         )
         session = self.session()
         self.assertEqual(session.draft.model_dump(), DETAILS)
@@ -497,19 +469,16 @@ class GraphCollectionTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaisesRegex(TypeError, "bug"):
             self.turn("Hello")
 
-    def test_confirmation_revalidates_future_start_and_retries_do_not_create_new_drafts(self):
+    def test_clock_progress_does_not_invalidate_confirmation_or_create_new_drafts(self):
         self.fill()
         session = self.session()
         assert session.request is not None
-        self.now = session.request.start
+        self.now += timedelta(days=10)
         result = self.confirm()
-        self.assertIn("future", result["messages"][-1].content)
-        self.assertEqual(self.session().status, "collecting")
-        self.assertIsNone(self.session().request)
+        self.assertEqual(result["messages"][-1].content, READY_REPLY)
+        self.assertEqual(self.session().status, "ready")
+        self.assertEqual(self.session().request, session.request)
         self.assertEqual(self.session().draft_id, session.draft_id)
-        self.now = NOW
-        self.fill()
-        self.confirm()
         confirmed = self.session()
         self.confirm()
         self.assertEqual(self.session(), confirmed)

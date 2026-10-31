@@ -6,18 +6,18 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
-from reservation_collection import ValidatedReservationRequest
+from reservation_collection import SubmittedReservationRequest, ValidatedReservationRequest
 from storage import DynamicParkingStore, StorageConfig
 from storage.dynamic import JSONValue
 from storage.reservations import ReservationConflict, ReservationStore
 
 NOW = datetime(2030, 1, 1, tzinfo=UTC)
-START = NOW + timedelta(days=1)
+START = NOW
 END = START + timedelta(hours=2)
 IDS = ["demo-central:space:G-A01", "demo-central:space:G-A02"]
 
 
-def request(identifier="draft-1", start=START, end=END, **changes):
+def request(identifier="draft-1", duration_hours: float = 2, **changes):
     return ValidatedReservationRequest.model_validate(
         dict(
             draft_id=identifier,
@@ -26,12 +26,14 @@ def request(identifier="draft-1", start=START, end=END, **changes):
             first_name="Demo",
             surname="Tester",
             car_number="my bicycle",
-            start=start,
-            end=end,
-            timezone="UTC",
+            duration_hours=duration_hours,
             **changes,
         )
     )
+
+
+def submitted_request():
+    return SubmittedReservationRequest(**request().model_dump(), start=START, end=END)
 
 
 class ReservationStorageTests(unittest.TestCase):
@@ -69,7 +71,7 @@ class ReservationStorageTests(unittest.TestCase):
         for value, space, thread in (
             (request(), "G-A02", "one"),
             (request(), "G-A01", "two"),
-            (request(start=START + timedelta(minutes=1)), "G-A01", "one"),
+            (request(duration_hours=3), "G-A01", "one"),
         ):
             with self.subTest(space=space, thread=thread), self.assertRaises(ReservationConflict):
                 self.hold(value, space, thread)
@@ -84,9 +86,12 @@ class ReservationStorageTests(unittest.TestCase):
         ):
             for thread in ("one", "two"):
                 with self.subTest(start=start, thread=thread), self.assertRaises(ReservationConflict):
-                    self.hold(request("other", start, end), thread=thread)
-        self.hold(request("adjacent-after", END, END + timedelta(hours=1)))
-        self.hold(request("adjacent-before", START - timedelta(hours=1), START))
+                    self.now = start
+                    self.hold(request("other", (end - start).total_seconds() / 3600), thread=thread)
+        self.now = END
+        self.hold(request("adjacent-after", 1))
+        self.now = START - timedelta(hours=1)
+        self.hold(request("adjacent-before", 1))
         self.hold(request("different-space"), space="G-A02")
 
     def test_concurrent_overlapping_holds_have_exactly_one_winner_across_store_instances(self):
@@ -121,10 +126,11 @@ class ReservationStorageTests(unittest.TestCase):
             self.hold()
         self.assertIsNone(self.store.get("draft-1:1", "one"))
 
-    def test_past_start_cannot_be_submitted(self):
-        self.now = START
-        with self.assertRaises(ReservationConflict):
-            self.hold()
+    def test_new_submission_captures_current_time_not_draft_time(self):
+        self.now += timedelta(days=1)
+        row = self.hold()
+        self.assertEqual(row.request.start, self.now)
+        self.assertEqual(row.request.end, self.now + timedelta(hours=2))
 
     def test_refusal_releases_hold_and_approval_keeps_it(self):
         row = self.hold()
@@ -164,7 +170,7 @@ class ReservationStorageTests(unittest.TestCase):
 
     def test_late_approval_becomes_elapsed_and_never_approved(self):
         row = self.hold()
-        self.now = START
+        self.now = END
         result = self.store.decide(row.request_id, "one", "approve")
         self.assertEqual(result.status, "elapsed")
         self.assertIsNone(result.approval_time)
@@ -175,8 +181,6 @@ class ReservationStorageTests(unittest.TestCase):
         self.assertEqual(self.store.blocked_spaces("demo-central", START, END), ["G-A01"])
         self.assertEqual(self.store.blocked_spaces("demo-central", END, END + timedelta(hours=1)), [])
         self.assertEqual(self.store.blocked_spaces("other", START, END), [])
-        self.assertEqual(self.store.blocked_spaces("demo-central"), [])
-        self.now = START
         self.assertEqual(self.store.blocked_spaces("demo-central"), ["G-A01"])
         self.now = END
         self.assertEqual(self.store.blocked_spaces("demo-central"), [])

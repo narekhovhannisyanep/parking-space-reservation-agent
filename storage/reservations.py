@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Literal
 
-from reservation_collection import ValidatedReservationRequest, clean_text
+from reservation_collection import SubmittedReservationRequest, ValidatedReservationRequest, clean_text, duration_period
 from storage.dynamic import DynamicParkingStore, snapshot_eligible_ids
 from storage.spaces import SpaceFilters
 
@@ -29,7 +29,7 @@ class ReservationRecord:
     request_id: str
     thread_id: str
     space_id: str
-    request: ValidatedReservationRequest
+    request: SubmittedReservationRequest
     status: ReservationStatus
     submitted_at: datetime
     decision_at: datetime | None
@@ -58,7 +58,7 @@ class ReservationStore:
             request_id=row["request_id"],
             thread_id=row["thread_id"],
             space_id=row["space_id"],
-            request=ValidatedReservationRequest.model_validate_json(row["request_json"]),
+            request=SubmittedReservationRequest.model_validate_json(row["request_json"]),
             status=row["status"],
             submitted_at=datetime.fromisoformat(row["submitted_at"]),
             decision_at=datetime.fromisoformat(row["decision_at"]) if row["decision_at"] else None,
@@ -87,15 +87,15 @@ class ReservationStore:
             ).fetchone()
             if existing:
                 row = self._from_row(existing)
-                if row.thread_id != thread_id or row.space_id != space_id or row.request != request:
+                if row.thread_id != thread_id or row.space_id != space_id or row.request.collected_details() != request:
                     raise ReservationConflict("This request identity has already been used with different details.")
                 return row
-            now = self.clock()
+            try:
+                now, end = duration_period(request.duration_hours, self.clock())
+            except ValueError as error:
+                raise ReservationConflict(str(error)) from None
             submitted_at = timestamp(now)
-            if request.start <= now:
-                raise ReservationConflict(
-                    "Reservation start must still be in the future. Correct and confirm the period."
-                )
+            submitted = SubmittedReservationRequest(**request.model_dump(), start=now, end=end)
             facts = connection.execute(
                 "SELECT * FROM parking_dynamic_facts WHERE location_id = ? AND kind = 'availability'",
                 (request.location_id,),
@@ -108,7 +108,7 @@ class ReservationStore:
             overlap = connection.execute(
                 "SELECT 1 FROM parking_reservations WHERE location_id = ? AND space_id = ? "
                 "AND status IN ('pending', 'approved') AND start_at < ? AND end_at > ? LIMIT 1",
-                (request.location_id, space_id, timestamp(request.end), timestamp(request.start)),
+                (request.location_id, space_id, timestamp(submitted.end), timestamp(submitted.start)),
             ).fetchone()
             if overlap:
                 raise ReservationConflict(
@@ -122,13 +122,13 @@ class ReservationStore:
                     thread_id,
                     request.location_id,
                     space_id,
-                    request.model_dump_json(),
-                    timestamp(request.start),
-                    timestamp(request.end),
+                    submitted.model_dump_json(),
+                    timestamp(submitted.start),
+                    timestamp(submitted.end),
                     submitted_at,
                 ),
             )
-        return ReservationRecord(request_id, thread_id, space_id, request, "pending", now.astimezone(UTC), None, None)
+        return ReservationRecord(request_id, thread_id, space_id, submitted, "pending", now, None, None)
 
     def decide(self, request_id: str, thread_id: str, decision: HumanDecision) -> ReservationRecord:
         if decision not in ("approve", "refuse"):
@@ -150,7 +150,7 @@ class ReservationStore:
             now = self.clock()
             decision_at = timestamp(now)
             status: ReservationStatus = "refused" if decision == "refuse" else "approved"
-            if decision == "approve" and row.request.start <= now:
+            if decision == "approve" and row.request.end <= now:
                 status = "elapsed"
             connection.execute(
                 "UPDATE parking_reservations SET status = ?, decision_at = ?, approval_time = ? WHERE request_id = ?",

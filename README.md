@@ -280,11 +280,14 @@ Blocked spaces are filtered before ranking, so fewer than three (or zero) option
 offered only when fewer eligible spaces remain, never because a blocked best match
 displaced an eligible one.
 
-For a validated draft period, Python also excludes overlapping pending/approved holds
-before ranking; otherwise it excludes only holds active now and labels the evidence
-`current_observations`. Evidence carries the UTC period and `eligibility_scope`, not
+For a validated duration, Python previews **now → now + requested hours** and excludes
+overlapping pending/approved holds before ranking; otherwise it excludes only holds
+active now and labels the evidence `current_observations`. Evidence carries the preview
+UTC period and `eligibility_scope`, not
 private ledger fields. `/options` explicitly requests suggestions using a code-owned
-availability query. Changing date/time/timezone values invalidates previous offers.
+availability query. Offers are bound to `offer_duration_hours`; changing duration
+invalidates them. Passing time alone does not invalidate confirmation or offers:
+submission computes and atomically rechecks its own actual period.
 
 JSON evidence is appended only to a copy of the latest user message for the model.
 Dynamic snapshots have evidence-budget priority and are the instructed source for
@@ -316,19 +319,37 @@ require them. Chroma telemetry is disabled.
 ## Reservation draft collection
 
 The chatbot collects first name, surname, `car_number` (a user-provided vehicle
-identifier, not necessarily a plate), and start/end dates/times. Current code accepts
-full `YYYY-MM-DD HH:MM` or ISO `T` timestamps, optionally seconds/UTC offsets, with
-an explicit IANA timezone or UTC offset when needed. It normalizes to UTC, requires
-a future start and end after start, and asks for clarification on relative/shorthand
-dates, timezone conflicts, and ambiguous/nonexistent daylight-saving times.
+identifier, not necessarily a plate), and **how many hours** the user wants to reserve.
+It does **not** ask for dates, start/end times, or the user's timezone. Reservations
+are immediate, not scheduled for a future date. The application server's UTC clock
+(`datetime.now(UTC)`) supplies the start when submission succeeds; there is no
+LangSmith time lookup, extra service, or new dependency.
 
-Example synthetic message (use actual future dates):
+Use a positive number of hours, such as `2` or `1.5`; `hour(s)`, `hr(s)`, and `h`
+suffixes are accepted. Common English expressions such as `two hours` or `half an hour`
+also work. Unsupported or ambiguous expressions prompt for a numeric hour value;
+Python never guesses a duration from dates or another unit. Nonfinite, zero, negative,
+unrepresentably small, or overflowing durations are rejected.
+
+Example synthetic message:
 
 “Reserve parking. First name Demo, surname Tester, car number demo-bicycle-1.
-Start 2030-06-01 10:00, end 2030-06-01 12:00, timezone UTC+04:00.”
+I want to reserve for 2 hours.”
 
 Python validates proposed verbatim field values and renders a revisioned summary.
 Substring checks do not prove correct semantic extraction; the user reviews the summary.
+`ValidatedReservationRequest` contains names, vehicle identifier, and numeric duration,
+not a provisional start/end. `SubmittedReservationRequest` adds the canonical UTC period
+inside the hold transaction. Thus time spent collecting details or choosing options
+does not consume the requested duration. **Time waiting for administrator review after
+submission does count**, as selected by the user; approval does not restart the clock.
+
+Submitting without required details now starts/continues collection and names only the
+missing fields (first name, surname, vehicle identifier, and how many hours). It explains
+that the assistant will show the details for checking before sending a request to the
+administrator, rather than showing the previous abstract confirmation/approval warning.
+If all fields are supplied but not confirmed, `/submit` displays the confirmation
+summary without creating a hold or implicitly confirming/submitting anything.
 
 | Reply/command | Effect |
 | --- | --- |
@@ -336,17 +357,22 @@ Substring checks do not prove correct semantic extraction; the user reviews the 
 | `yes`, `yes.`, `confirm`, `I confirm` | Confirm only immediately after the matching summary |
 | `no`, `no.` | Decline details confirmation |
 | A natural-language correction | Propose changes and validate/show a new summary |
-| `/clear FIELD` | Remove `first_name`, `surname`, `car_number`, `start`, `end`, or `timezone` |
+| `/clear FIELD` | Remove `first_name`, `surname`, `car_number`, or `duration_hours` |
 | `/cancel` | Clear the draft/confirmation, not chat history |
 | `/new` | Start a new empty draft |
-| `/options` | Show up to three current semantic suggestions; validated periods exclude overlapping holds |
-| `/submit SPACE_ID` | Submit one currently offered space for the confirmed period, creating its pending hold before administrator review |
+| `/options` | Show up to three semantic suggestions for a now-based duration preview; overlapping holds are excluded |
+| `/submit SPACE_ID` | Submit one currently offered space for the confirmed duration, starting its pending hold now before administrator review |
 
 States: `idle`, `collecting`, `awaiting_confirmation`, `ready`, `cancelled`.
 Changes and rejected/unreadable updates invalidate confirmation. `ready` is collected,
 user-confirmed information only. General information turns still use RAG while collecting.
-Current commands/revisions/timezone rules describe implemented behavior, not additional
+Current commands/revisions/duration rules describe implemented behavior, not additional
 assignment requirements that cannot be reconsidered during refactoring.
+
+**Older Studio threads:** legacy draft schedules and confirmations are discarded on
+read, while names/vehicle identifiers are retained. Provide hours and confirm the new
+summary, or use `/new`/a fresh thread. Restarting still resets the disposable SQLite
+ledger; old submitted checkpoints cannot resurrect a missing request. Chroma is unchanged.
 
 ## Stage 2: submission and human administrator review
 
@@ -390,9 +416,10 @@ hold is retained and the failed graph run can be retried.
   block overlaps on the same space/location, including earlier requests from the
   same thread. Adjacent periods can share a space. No multi-space request is modeled.
 - `/submit` requires confirmed current details and a currently offered ID bound to
-  that period. Public overrides and interval conflicts are rechecked together inside
-  a short SQLite write transaction. Transactions never span embeddings, model calls,
-  or human review.
+  that duration. After acquiring SQLite's write lock, Python captures current UTC time,
+  derives end from the confirmed hours, rechecks public overrides and interval conflicts,
+  and inserts the pending hold in the same short transaction. Transactions never span
+  embeddings, model calls, or human review. Pending/outcome replies show the actual UTC period.
 - The stable request ID is `draft_id:revision`. Replaying submission cannot create a
   duplicate or silently change its space/details. Administrator-node replay does not
   regenerate the review message; decision replay preserves the original timestamp.
@@ -402,8 +429,9 @@ hold is retained and the failed graph run can be retried.
 - While waiting, the current request cannot be edited, cancelled, or replaced by
   `/new`. It waits for human review without an expiry timer. After a decision, replies
   retain that outcome until `/new`; `/cancel` does not reverse an approved allocation.
-- Submission rechecks that start is still future. If an approval arrives at/after
-  start, the request becomes `elapsed`, not approved, and its hold is released.
+- The fixed period starts at submission, and waiting for review counts toward its hours.
+  Approval is allowed before end, even though start has already passed. If approval
+  arrives at/after end, the request becomes `elapsed`, not approved, and its hold is released.
   Refusal is still allowed. Ended periods stop blocking on-demand queries without
   background cleanup or deleting historical records. Approval reversal is out of scope.
 - SQLite is authoritative. A startup reset removes the ledger even if Agent Server
@@ -443,6 +471,8 @@ Load tests and MCP/file integration remain Stages 3–4 work.
 alternative. Actual endpoint support is required; there is no prose-parsing fallback.
 Offline tests do not prove live compatibility. On 2026-10-30 both opt-in synthetic
 smoke checks passed with `function_calling` and `gpt-6.1-sol-2026-09-29` (VPN connected).
+Those checks used the previous scheduled-booking schema. The new duration-only
+extraction schema is covered offline but has not yet been live-verified.
 Live answer accuracy is measured separately in [RAG_EVALUATION.md](RAG_EVALUATION.md).
 
 Opt-in smoke test (synthetic data, mocked public stores, no tracing):
@@ -463,7 +493,7 @@ credential patterns, known draft values, and labeled-value checks:
 - Selected startup/turn evidence is checked before entering graph context/model
   prompts. Contaminated existing records cause safe failure, not automatic rewriting
   or collection-wide scanning. The static-reuse rule is unchanged.
-- Necessary names, vehicle identifier, and period still reach reservation extraction.
+- Necessary names, vehicle identifier, and duration hours still reach reservation extraction.
   Other detected sensitive data is replaced by offset-preserving spaces. Extracted
   updates must be verbatim in sanitized text, so removed values cannot become draft
   fields. Conflicting required values need clarification.
@@ -534,7 +564,8 @@ Coverage includes Chroma/SQLite CRUD and persistence, validation/isolation/concu
 startup seeding/static reuse, SQLite reset/failure propagation, real Starlette lifespan,
 eligibility-constrained semantic ranking/query privacy/thread isolation, context refresh/budgets/message preservation,
 sync/async execution, and draft
-collection/confirmation/timezone handling, public PII rejection, extraction redaction,
+collection/confirmation/duration handling, submission-time UTC periods, delayed review,
+expiry boundaries, replay stability, public PII rejection, extraction redaction,
 old-draft filtering, local-model readiness, guarded sync/async streaming, request/
 location-term detection, "other options" exclusion, and RAG evaluation metrics/rules.
 It does not establish complete privacy enforcement or completion of load tests.
@@ -548,6 +579,11 @@ uv tool run ruff format --check app.py parking_agent.py administrator_agent.py g
 ```
 
 ## Next steps
+
+**Completed user-requested simplification:** immediate reservations using the server
+UTC clock, collecting only duration hours instead of dates/timezone, and actionable
+missing-details prompts instead of the confusing confirmation/approval warning.
+The draft/offer/hold architecture and administrator expiry rules now support this flow.
 
 Finish Stage 3 using the retained choices in AGENTS.md: decide MCP implementation
 (or documented permitted fallback), output-file layout, retries, and practical access

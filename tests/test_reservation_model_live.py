@@ -82,7 +82,7 @@ class LiveReservationModelTests(unittest.TestCase):
         graph = self.agent.graph
         for text in (
             "Reserve parking. First name Demo, surname Tester, car number demo-bicycle-1.",
-            "Start 2030-06-01 10:00, end 2030-06-01 12:00, timezone UTC+04:00.",
+            "I want to reserve for 2 hours.",
             "Change surname to Example.",
         ):
             result = self.safely(lambda text=text: graph.invoke({"messages": [("user", text)]}, config))
@@ -93,7 +93,8 @@ class LiveReservationModelTests(unittest.TestCase):
         state = graph.get_state(config).values["reservation"]
         self.assertEqual(state["status"], "awaiting_confirmation")
         self.assertEqual(state["draft"]["surname"], "Example")
-        # Compare instants, not Pydantic's UTC serialization ("Z" versus "+00:00").
-        self.assertEqual(datetime.fromisoformat(state["request"]["start"]), datetime(2030, 6, 1, 6, tzinfo=UTC))
+        self.assertEqual(state["request"]["duration_hours"], 2)
+        self.assertNotIn("start", state["request"])
+        self.assertNotIn("timezone", state["draft"])
         result = self.safely(lambda: graph.invoke({"messages": [("user", f"/confirm {state['revision']}")]}, config))
         self.assertEqual(result["messages"][-1].content, READY_REPLY)

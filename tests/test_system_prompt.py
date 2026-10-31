@@ -24,11 +24,12 @@ class SystemPromptTests(unittest.TestCase):
             "first name",
             "surname",
             "car number",
-            "start/end dates and times",
-            "timezones",
+            "how many hours",
+            "server clock",
         ):
             with self.subTest(requirement=requirement):
                 self.assertIn(requirement, SYSTEM_PROMPT)
+        self.assertIn("never ask for dates, start/end times, or the user's", SYSTEM_PROMPT)
 
     def test_prompt_keeps_authority_and_serialization_outside_the_model(self):
         for boundary in (

@@ -108,6 +108,13 @@ as code are extra-credit artifacts; see the baseline for details.
   overrides and period overlap and inserts a pending SQLite hold before review.
   Offers never hold spaces. Half-open UTC periods `[start, end)` allow adjacent bookings;
   pending/approved rows block overlaps, including earlier requests from the same thread.
+- **Immediate duration-only reservations (user-approved replacement for scheduled booking):**
+  collect first name, surname, vehicle identifier, and how many hours; never ask for
+  dates, start/end times, or the user's timezone. Python uses the server UTC clock.
+  The user selected submission time, not approval time, as the start: capture it inside
+  the atomic hold transaction and calculate end from the confirmed duration. Waiting
+  for administrator review counts toward those hours. Offers preview a now-based window
+  and bind to duration, not an expiring draft start; submission rechecks its actual window.
 - **Administrator channel:** the user chose Studio review, not REST/email/messenger.
   The second LangChain agent prepares a bounded review message from canonical submitted
   details, and Python shows the private facts through a typed LangGraph interrupt.
@@ -116,7 +123,7 @@ as code are extra-credit artifacts; see the baseline for details.
   public UI, new service, or new dependency is selected.
 - **Decision lifecycle:** refusal immediately releases the hold; approval retains it
   and a UTC approval time. No user editing/cancellation or `/new` while awaiting review.
-  Submission rechecks future start; approval at/after start becomes `elapsed`, not
+  Approval before the fixed end is allowed; approval at/after end becomes `elapsed`, not
   approved, and releases the hold. Ended periods stop blocking on demand; no automatic
   expiry timer/background cleanup. `/new` after a decision starts a separate request.
   Decision/submission replay is idempotent; approval reversal is out of scope.
@@ -191,14 +198,18 @@ as code are extra-credit artifacts; see the baseline for details.
   fresh request, `/cancel`, or `/new` starts a new round. Blocked spaces are filtered
   before ranking, so fewer than three options appear only when fewer eligible remain. Hours/prices remain unknown when missing. These snapshots do not allocate
   or guarantee availability for a booking period. Stage 2 separately reads blocked IDs
-  from the private ledger before ranking for a validated draft period; unknown periods
-  use current observations and exclude only active-now holds. `offer_period` binds
-  offered IDs to their UTC period; date/time/timezone changes invalidate those offers.
+  from the private ledger before ranking for a now-based preview of the validated
+  duration; unknown durations use current observations and exclude only active-now holds.
+  `offer_duration_hours` binds offered IDs to duration; duration changes invalidate offers.
+  Passing time alone does not invalidate confirmation/offers; submission rechecks overlap.
 - Draft collection, field validation, and user confirmation are implemented.
   `ValidatedReservationRequest` means collected details, not a submission or approval.
-  Current code uses explicit dates/timezones, UTC normalization, draft revisions,
-  confirmation commands, and cancellation. See README for behavior; these details
-  may be simplified through a separately agreed refactor.
+  Current code uses positive duration hours, draft revisions, confirmation commands,
+  and cancellation. `SubmittedReservationRequest` adds the server-generated UTC period
+  only when holding. Missing-detail submission starts/continues collection with concrete
+  missing-field prompts; complete unconfirmed details show a confirmation summary.
+  Legacy draft checkpoints discard schedule/confirmation, preserve personal fields, and
+  require duration plus fresh confirmation. See README for behavior.
 - Private `storage/reservations.py` owns `parking_reservations` in the same SQLite
   database/lifecycle as public facts, but public CRUD/RAG never return its personal
   fields. Statuses are pending/approved/refused/elapsed. Stable `draft_id:revision`
@@ -212,7 +223,8 @@ as code are extra-credit artifacts; see the baseline for details.
   Private payloads, SQLite, checkpoints/debug and Studio remain trusted local data.
   Typed response/request-ID checks are not administrator authentication.
 - Structured extraction defaults to `function_calling`, with explicit `json_schema`
-  support. Opt-in live smoke checks passed with `function_calling` on 2026-10-30.
+  support. Opt-in live smoke checks passed with the earlier scheduled-booking schema
+  on 2026-10-30; the duration-only schema has offline coverage, not live verification.
 - Privacy checks are code-enforced at public ingestion/evidence, model-copy and response
   boundaries using local Presidio/spaCy plus rules/known values. Imports do not load NLP;
   startup prepares it before databases. Missing/broken detection fails closed; runtime
@@ -246,10 +258,14 @@ as code are extra-credit artifacts; see the baseline for details.
 
 ## Next-session handoff
 
-- **Where we stopped:** Stages 1–2 are implemented, including confirmed details →
+- **Where we stopped:** Stages 1–2 use duration-only immediate reservations: names,
+  vehicle identifier, hours → confirmed details →
   `/options` → `/submit SPACE_ID` → atomic private SQLite hold → second LangChain
   communication agent → typed Studio human review → code-controlled outcome reply.
-  README contains the demo and trusted-local limitations. Stage 2 has not been manually
+  Python fixes the UTC start/end at submission; review waiting consumes the duration,
+  and approval is allowed until end. Missing-field prompts and offline delay/replay/
+  boundary tests are updated. README contains the demo and trusted-local limitations.
+  The duration-only schema and Stage 2 have not been manually
   demonstrated in Studio or checked with a live administrator model. Earlier VPN/Studio
   connectivity and Stage 1 evaluation do not establish that validation. No static data
   or provider change was needed; do not erase/reseed populated Chroma.

@@ -16,7 +16,7 @@ from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.types import Command
 from openai import APIError
 from pydantic import ValidationError
-from test_reservation_storage import END, NOW, START, request
+from test_reservation_storage import END, NOW, START, request, submitted_request
 from test_static_storage import KeywordEmbeddings
 
 from administrator_agent import AdministratorAgent, AdministratorDecision, ReviewWording
@@ -33,7 +33,7 @@ class AdministratorAgentTests(unittest.IsolatedAsyncioTestCase):
         self.admin = AdministratorAgent(composer_factory=lambda: self.composer)
 
     def test_request_payload_uses_canonical_fields_not_model_authority(self):
-        payload = self.admin.prepare(request(), "G-A01", "draft-1:1", {})
+        payload = self.admin.prepare(submitted_request(), "G-A01", "draft-1:1", {})
         self.assertEqual(payload["request"]["first_name"], "Demo")
         self.assertEqual(payload["request"]["car_number"], "my bicycle")
         self.assertEqual(payload["space_id"], "G-A01")
@@ -54,7 +54,7 @@ class AdministratorAgentTests(unittest.IsolatedAsyncioTestCase):
         ):
             with self.subTest(output=output):
                 self.composer.invoke.return_value = output
-                payload = self.admin.prepare(request(), "G-A01", "draft-1:1", {})
+                payload = self.admin.prepare(submitted_request(), "G-A01", "draft-1:1", {})
                 self.assertEqual(payload["message"], "Please approve or refuse the reservation request below.")
                 self.assertEqual(payload["status"], "pending")
 
@@ -69,14 +69,14 @@ class AdministratorAgentTests(unittest.IsolatedAsyncioTestCase):
                 AdministratorDecision.model_validate(data)
 
     async def test_async_preparation_uses_native_async_composer(self):
-        payload = await self.admin.aprepare(request(), "G-A01", "draft-1:1", {})
+        payload = await self.admin.aprepare(submitted_request(), "G-A01", "draft-1:1", {})
         self.assertEqual(payload["status"], "pending")
         self.composer.invoke.assert_not_called()
         self.composer.ainvoke.assert_awaited_once()
 
     def test_provider_failure_preserves_review_with_deterministic_wording(self):
         self.composer.invoke.side_effect = APIError("private-api-key", request=Mock(), body=None)
-        payload = self.admin.prepare(request(), "G-A01", "draft-1:1", {})
+        payload = self.admin.prepare(submitted_request(), "G-A01", "draft-1:1", {})
         self.assertEqual(payload["message"], "Please approve or refuse the reservation request below.")
         self.assertNotIn("private-api-key", str(payload))
 
@@ -119,14 +119,12 @@ class AdministratorWorkflowTests(unittest.TestCase):
     def state(self, config=None):
         return self.agent.graph.get_state(config or self.config).values
 
-    def fill(self, config=None, start=START, end=END):
+    def fill(self, config=None, duration_hours="2"):
         fields = {
             "first_name": "Demo",
             "surname": "Tester",
             "car_number": "my bicycle",
-            "start": start.isoformat(),
-            "end": end.isoformat(),
-            "timezone": "UTC",
+            "duration_hours": duration_hours,
         }
         self.extraction = ReservationExtraction(
             intent="reservation",
@@ -197,7 +195,7 @@ class AdministratorWorkflowTests(unittest.TestCase):
         self.assertEqual(self.composer.invoke.call_count, 1)
         self.assertEqual(self.record(interrupt.value["request_id"]).status, "approved")
 
-    def test_submission_requires_confirmed_details_and_period_bound_offered_id(self):
+    def test_submission_requires_confirmed_details_and_duration_bound_offered_id(self):
         result = self.turn("/submit G-A01")
         self.assertNotIn("__interrupt__", result)
         self.fill()
@@ -213,13 +211,13 @@ class AdministratorWorkflowTests(unittest.TestCase):
         self.assertIn("offered", result["messages"][-1].content)
         self.composer.invoke.assert_not_called()
 
-    def test_period_change_invalidates_previous_offers(self):
+    def test_duration_change_invalidates_previous_offers(self):
         self.fill()
         offered = self.options()
         self.extraction = ReservationExtraction(
-            intent="reservation", updates=[FieldUpdate(field="end", value=(END + timedelta(hours=1)).isoformat())]
+            intent="reservation", updates=[FieldUpdate(field="duration_hours", value="3")]
         )
-        self.turn("Change end " + self.extraction.updates[0].value)
+        self.turn("Change duration to " + self.extraction.updates[0].value + " hours")
         self.extraction = ReservationExtraction()
         self.turn(f"/confirm {self.state()['reservation']['revision']}")
         result = self.turn(f"/submit {offered[0]}")
@@ -244,7 +242,8 @@ class AdministratorWorkflowTests(unittest.TestCase):
         self.fill(other)
         self.assertNotIn(space, self.options(other))
         self.turn("/new", other)
-        self.fill(other, start=END, end=END + timedelta(hours=1))
+        self.now = END
+        self.fill(other, duration_hours="1")
         with patch.object(self.agent.static_store, "search", wraps=self.agent.static_store.search) as search:
             self.options(other)
         self.assertIn(f"demo-central:space:{space}", search.call_args.kwargs["eligible_ids"])
@@ -275,9 +274,9 @@ class AdministratorWorkflowTests(unittest.TestCase):
 
     def test_late_review_reports_elapsed_and_releases_hold(self):
         interrupt, _ = self.submit()
-        self.now = START
+        self.now = END
         result = self.decide(interrupt)
-        self.assertIn("start has passed", result["messages"][-1].content)
+        self.assertIn("period has ended", result["messages"][-1].content)
         row = self.record(interrupt.value["request_id"])
         self.assertEqual(row.status, "elapsed")
         self.assertIsNone(row.approval_time)
@@ -300,17 +299,25 @@ class AdministratorWorkflowTests(unittest.TestCase):
             self.assertRaisesRegex(RuntimeError, "checkpoint boundary"),
         ):
             self.turn(f"/submit {offered[0]}")
+        request_id = f"{self.state()['reservation']['draft_id']}:{self.state()['reservation']['revision']}"
+        original = self.record(request_id)
+        self.now += timedelta(minutes=30)
         result = self.agent.graph.invoke(None, self.config)
         self.assertIn("__interrupt__", result)
+        self.assertEqual(self.record(request_id), original)
         self.assertEqual(self.agent.reservation_store.blocked_spaces("demo-central", START, END), [offered[0]])
 
     def test_async_submission_and_resume_use_native_composer(self):
         self.fill()
         offered = self.options()
+        self.now += timedelta(hours=5)
 
         async def run():
             result = await self.agent.graph.ainvoke({"messages": [HumanMessage(f"/submit {offered[0]}")]}, self.config)
             interrupt = result["__interrupt__"][0]
+            row = self.record(interrupt.value["request_id"])
+            self.assertEqual(row.request.start, self.now)
+            self.now += timedelta(minutes=30)
             return await self.agent.graph.ainvoke(
                 Command(resume={"request_id": interrupt.value["request_id"], "decision": "approve"}), self.config
             )
@@ -319,6 +326,9 @@ class AdministratorWorkflowTests(unittest.TestCase):
         self.assertIn("approved", result["messages"][-1].content)
         self.composer.invoke.assert_not_called()
         self.composer.ainvoke.assert_awaited_once()
+        row = self.record(self.state()["submission"]["request_id"])
+        self.assertEqual(row.request.end - row.request.start, timedelta(hours=2))
+        self.assertEqual(row.approval_time, self.now)
 
     def test_raw_administrator_model_tokens_are_not_published_sync_or_async(self):
         payload = json.dumps({"message": "Please review Demo Tester my bicycle password=synthetic-secret"})
@@ -408,9 +418,7 @@ class AdministratorWorkflowTests(unittest.TestCase):
 
     def test_unknown_period_excludes_only_currently_active_holds(self):
         ids = self.agent.static_store.list_space_ids("demo-central")
-        row = self.agent.reservation_store.hold(
-            request("active", NOW + timedelta(seconds=1), END), "G-A01", "other", ids
-        )
+        row = self.agent.reservation_store.hold(request("active"), "G-A01", "other", ids)
         self.now += timedelta(seconds=1)
         with patch.object(self.agent.static_store, "search", wraps=self.agent.static_store.search) as search:
             self.options()

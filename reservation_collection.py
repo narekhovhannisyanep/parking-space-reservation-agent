@@ -3,31 +3,32 @@
 import re
 import unicodedata
 from collections.abc import Sequence
-from datetime import UTC, datetime, timedelta, timezone, tzinfo
+from datetime import UTC, datetime, timedelta
+from math import isfinite
 from typing import Literal
 from uuid import uuid4
-from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from langchain_core.messages import AIMessage, AnyMessage, BaseMessage, HumanMessage, SystemMessage
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from storage import SpaceFilters
 
-DraftField = Literal["first_name", "surname", "car_number", "start", "end", "timezone"]
+DraftField = Literal["first_name", "surname", "car_number", "duration_hours"]
 FIELD_LABELS = {
     "first_name": "first name",
     "surname": "surname",
     "car_number": "car number (your vehicle identifier)",
-    "start": "reservation start date and time",
-    "end": "reservation end date and time",
-    "timezone": "timezone (IANA name such as Asia/Yerevan, UTC, or UTC+04:00)",
+    "duration_hours": "how many hours you want to reserve (for example, 2 or 1.5)",
 }
 EXTRACTION_RULES = """Extract reservation intent and proposed field updates from ONLY the latest human text.
 Use intent=reservation for a booking request or an answer/correction to the current collection;
 use information for general parking questions, even when a draft exists. Never invent missing details.
 Each update's value must be a verbatim substring of the latest human text, not the existing draft,
-assistant text, or an inferred value. Copy date/time expressions verbatim: Python interprets them.
-Do not translate, complete dates, infer a timezone, invent a vehicle identifier, or normalize values.
+assistant text, or an inferred value. For duration_hours, copy the number or hours expression
+verbatim, including number words; Python interprets it. Do not extract opening hours as a duration.
+Reservations start now when submitted, using the server clock. Collect only how many hours,
+not dates, start/end times or a timezone. Never infer a duration from dates, times, or another unit.
+Do not translate, invent a vehicle identifier, or normalize values.
 Omit unchanged/unmentioned fields. First name and surname are separate; car_number is any user-provided
 vehicle identifier, including for vehicles without plates. Do not collect vehicle type or dimensions.
 You cannot confirm, submit, allocate, approve, or record. No approval/status/location fields are allowed.
@@ -55,7 +56,7 @@ class FieldUpdate(StrictModel):
 
 class ReservationExtraction(StrictModel):
     intent: Literal["information", "reservation"] = "information"
-    updates: list[FieldUpdate] = Field(default_factory=list, max_length=6)
+    updates: list[FieldUpdate] = Field(default_factory=list, max_length=4)
 
     @model_validator(mode="after")
     def validate_intent(self) -> "ReservationExtraction":
@@ -68,11 +69,9 @@ class ReservationDraft(StrictModel):
     first_name: str | None = None
     surname: str | None = None
     car_number: str | None = None
-    start: str | None = None
-    end: str | None = None
-    timezone: str | None = None
+    duration_hours: str | None = None
 
-    @field_validator("first_name", "surname", "car_number", "start", "end", "timezone")
+    @field_validator("first_name", "surname", "car_number", "duration_hours")
     @classmethod
     def validate_text(cls, value: str | None) -> str | None:
         return clean_text(value) if value is not None else None
@@ -87,11 +86,9 @@ class ValidatedReservationRequest(StrictModel):
     first_name: str
     surname: str
     car_number: str
-    start: datetime
-    end: datetime
-    timezone: str
+    duration_hours: float = Field(gt=0, allow_inf_nan=False)
 
-    @field_validator("draft_id", "location_id", "first_name", "surname", "car_number", "timezone")
+    @field_validator("draft_id", "location_id", "first_name", "surname", "car_number")
     @classmethod
     def validate_text(cls, value: str) -> str:
         return clean_text(value)
@@ -102,18 +99,34 @@ class ValidatedReservationRequest(StrictModel):
         SpaceFilters().where(value)
         return value
 
+    @field_validator("duration_hours")
+    @classmethod
+    def validate_duration(cls, value: float) -> float:
+        duration_delta(value)
+        return value
+
+
+class SubmittedReservationRequest(ValidatedReservationRequest):
+    """Canonical period captured by Python inside the successful hold transaction."""
+
+    start: datetime
+    end: datetime
+
     @field_validator("start", "end")
     @classmethod
     def normalize_utc(cls, value: datetime) -> datetime:
         if value.utcoffset() is None:
-            raise ValueError("An explicit timezone is required.")
+            raise ValueError("The server-generated reservation period must be timezone-aware.")
         return value.astimezone(UTC)
 
     @model_validator(mode="after")
-    def validate_period(self) -> "ValidatedReservationRequest":
-        if self.end <= self.start:
-            raise ValueError("Reservation end must be after start.")
+    def validate_period(self) -> "SubmittedReservationRequest":
+        if self.end - self.start != duration_delta(self.duration_hours):
+            raise ValueError("The reservation period must match the requested hours.")
         return self
+
+    def collected_details(self) -> ValidatedReservationRequest:
+        return ValidatedReservationRequest.model_validate(self.model_dump(exclude={"start", "end"}))
 
 
 class ReservationSession(StrictModel):
@@ -124,6 +137,27 @@ class ReservationSession(StrictModel):
     request: ValidatedReservationRequest | None = None
     confirmed_revision: int | None = Field(default=None, ge=1)
     summary_message_id: str | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def discard_legacy_schedule(cls, data: object) -> object:
+        # Existing Studio draft checkpoints can continue, but old dates never become
+        # an implicit duration or a confirmed immediate request. SQLite resets separately.
+        if isinstance(data, dict) and isinstance(draft := data.get("draft"), dict):
+            legacy = {"start", "end", "timezone"}
+            if legacy.intersection(draft):
+                data = {
+                    **data,
+                    "draft": {key: value for key, value in draft.items() if key not in legacy},
+                    "request": None,
+                    "confirmed_revision": None,
+                    "summary_message_id": None,
+                }
+                if data.get("status") not in {"idle", "cancelled"}:
+                    revision = data.get("revision", 0)
+                    if type(revision) is int:
+                        data = {**data, "status": "collecting", "revision": revision + 1}
+        return data
 
     @model_validator(mode="after")
     def validate_lifecycle(self) -> "ReservationSession":
@@ -162,51 +196,49 @@ def extraction_messages(session: ReservationSession, text: str) -> list[BaseMess
     ]
 
 
-def resolve_timezone(value: str) -> tzinfo:
-    if value.upper() in {"UTC", "Z"}:
-        return UTC
-    offset = re.fullmatch(r"(?:UTC)?([+-])(\d{2}):(\d{2})", value, flags=re.IGNORECASE)
-    if offset:
-        hours, minutes = int(offset[2]), int(offset[3])
-        if hours > 23 or minutes > 59 or (offset[1] == "-" and hours == 0 and minutes == 0):
-            raise ValueError("Use a valid UTC offset.")
-        return timezone(timedelta(minutes=(hours * 60 + minutes) * (-1 if offset[1] == "-" else 1)))
-    if "/" not in value or value.startswith(("posix/", "right/")):
-        raise ValueError("Use an IANA timezone or UTC offset, not an ambiguous abbreviation.")
+DURATION_ERROR = "Please enter a positive number of hours, for example 2 or 1.5."
+HOURS_BY_WORD = {
+    word: float(number)
+    for number, word in enumerate(
+        ["zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten", "eleven", "twelve"]
+    )
+}
+HOURS_BY_WORD.update({"a": 1.0, "an": 1.0, "half": 0.5, "half an": 0.5, "one and a half": 1.5})
+
+
+def duration_delta(hours: float) -> timedelta:
+    if not isfinite(hours) or hours <= 0:
+        raise ValueError(DURATION_ERROR)
     try:
-        return ZoneInfo(value)
-    except (ZoneInfoNotFoundError, ValueError):
-        raise ValueError("Timezone is unknown or its data is unavailable; use UTC or an explicit offset.") from None
+        delta = timedelta(hours=hours)
+    except OverflowError:
+        raise ValueError("The requested number of hours is too large.") from None
+    if delta <= timedelta(0):
+        raise ValueError(DURATION_ERROR)
+    return delta
 
 
-def resolve_datetime(value: str, zone: tzinfo | None) -> datetime:
-    # Do not let fromisoformat silently turn a date alone into midnight or accept offsets like +04:99.
-    if not re.fullmatch(r"\d{4}-\d{2}-\d{2}[Tt ]\d{2}:\d{2}(?::\d{2}(?:\.\d{1,6})?)?(?:[Zz]|[+-]\d{2}:\d{2})?", value):
-        raise ValueError("Use a full YYYY-MM-DD HH:MM date/time; clarify relative or ambiguous periods.")
-    suffix = re.search(r"[+-](\d{2}):(\d{2})$", value)
-    if suffix and (int(suffix[1]) > 23 or int(suffix[2]) > 59 or value.endswith("-00:00")):
-        raise ValueError("Use a valid, known UTC offset.")
-    local = datetime.fromisoformat(value.replace("z", "Z"))
-    if local.tzinfo is not None:
-        if zone is not None:
-            projected = local.astimezone(zone)
-            if (
-                projected.replace(tzinfo=None) != local.replace(tzinfo=None)
-                or projected.utcoffset() != local.utcoffset()
-            ):
-                raise ValueError("Date/time offset conflicts with the supplied timezone.")
-        return local.astimezone(UTC)
-    if zone is None:
-        raise ValueError("Provide a timezone or explicit offset for each date/time.")
-    candidates = {
-        candidate.astimezone(UTC)
-        for fold in (0, 1)
-        if (candidate := local.replace(tzinfo=zone, fold=fold)).astimezone(UTC).astimezone(zone).replace(tzinfo=None)
-        == local
-    }
-    if len(candidates) != 1:
-        raise ValueError("This local time is ambiguous or nonexistent at a clock change; provide an explicit offset.")
-    return candidates.pop()
+def resolve_duration(value: str) -> float:
+    expression = re.sub(r"\s*(?:hours?|hrs?|h)$", "", clean_text(value).lower()).strip()
+    if expression in HOURS_BY_WORD:
+        hours = HOURS_BY_WORD[expression]
+    elif re.fullmatch(r"(?:[0-9]+(?:\.[0-9]+)?|\.[0-9]+)", expression):
+        hours = float(expression)
+    else:
+        raise ValueError(DURATION_ERROR)
+    duration_delta(hours)
+    return hours
+
+
+def duration_period(hours: float, now: datetime) -> tuple[datetime, datetime]:
+    """UTC elapsed hours, independent of local timezone/daylight-saving transitions."""
+    if now.utcoffset() is None:
+        raise ValueError("The application clock must be timezone-aware.")
+    try:
+        start = now.astimezone(UTC)
+        return start, start + duration_delta(hours)
+    except OverflowError:
+        raise ValueError("The requested number of hours exceeds the supported reservation period.") from None
 
 
 def validate_draft(
@@ -217,37 +249,21 @@ def validate_draft(
     draft = session.draft
     issues = [
         f"Provide {FIELD_LABELS[field]}."
-        for field in ("first_name", "surname", "car_number", "start", "end")
+        for field in ("first_name", "surname", "car_number", "duration_hours")
         if getattr(draft, field) is None
     ]
-    zone = None
-    if draft.timezone is not None:
+    hours = None
+    if draft.duration_hours is not None:
         try:
-            zone = resolve_timezone(draft.timezone)
+            hours = resolve_duration(draft.duration_hours)
+            duration_period(hours, now)  # Check representability, but do not capture a draft start.
         except ValueError as error:
             issues.append(str(error))
-    times: dict[str, datetime] = {}
-    for field in ("start", "end"):
-        value = getattr(draft, field)
-        if value is not None:
-            try:
-                times[field] = resolve_datetime(value, zone)
-            except (ValueError, OverflowError) as error:
-                # fromisoformat errors can include user text; only our own fixed errors are shown.
-                reason = (
-                    str(error)
-                    if type(error) is ValueError and not str(error).startswith("Invalid isoformat")
-                    else "Use a valid calendar date/time."
-                )
-                issues.append(f"{FIELD_LABELS[field].capitalize()}: {reason}")
-    if "start" in times and times["start"] <= now.astimezone(UTC):
-        issues.append("Reservation start must be in the future.")
-    if "start" in times and "end" in times and times["end"] <= times["start"]:
-        issues.append("Reservation end must be after start.")
     if issues:
         return None, issues
     assert session.draft_id is not None
     assert draft.first_name is not None and draft.surname is not None and draft.car_number is not None
+    assert hours is not None
     return ValidatedReservationRequest(
         draft_id=session.draft_id,
         revision=session.revision,
@@ -255,9 +271,7 @@ def validate_draft(
         first_name=draft.first_name,
         surname=draft.surname,
         car_number=draft.car_number,
-        start=times["start"],
-        end=times["end"],
-        timezone=draft.timezone or "explicit offsets in supplied start/end",
+        duration_hours=hours,
     ), []
 
 
@@ -265,14 +279,14 @@ def confirmation_summary(request: ValidatedReservationRequest) -> str:
     return (
         f"Please confirm draft revision {request.revision}:\n"
         f"First name: {request.first_name}\nSurname: {request.surname}\nVehicle identifier: {request.car_number}\n"
-        f"Location: {request.location_id}\nTimezone: {request.timezone}\n"
-        f"Start (UTC): {request.start.isoformat()}\nEnd (UTC): {request.end.isoformat()}\n"
+        f"Location: {request.location_id}\nDuration: {str(request.duration_hours).removesuffix('.0')} hours\n"
+        "Your period starts when you submit your chosen space, using the server clock. Waiting for administrator review counts toward these hours.\n"
         f"Reply /confirm {request.revision} (or yes immediately after this summary), or provide corrections.\n"
-        "This confirms your details only, not administrator approval. After confirmation, send /options and select one with /submit SPACE_ID. No file recording is implemented."
+        "After confirmation, send /options and choose one with /submit SPACE_ID. The administrator will then approve or refuse your request."
     )
 
 
-READY_REPLY = "Your details are confirmed. Send /options for suggestions for your period, then /submit SPACE_ID to request one offered space. No request has been submitted, no space has been allocated, and no reservation has been approved or recorded."
+READY_REPLY = "Your details are confirmed. Send /options, then choose one offered space with /submit SPACE_ID. Your hours start when submission succeeds. The administrator will then approve or refuse your request. Nothing has been submitted yet."
 EXTRACTION_FAILURE = "Unable to read reservation details safely. Please retry or provide explicit field values. Previous confirmation has been cleared; no request has been submitted."
 
 
@@ -337,7 +351,7 @@ def advance_collection(
     if command.startswith("/clear"):
         field = command.removeprefix("/clear ")
         if field not in FIELD_LABELS:
-            errors.append("Use /clear followed by first_name, surname, car_number, start, end, or timezone.")
+            errors.append("Use /clear followed by first_name, surname, car_number, or duration_hours.")
         else:
             data[field] = None
             attempted = True
@@ -352,7 +366,7 @@ def advance_collection(
         )
     request, issues = validate_draft(session, location_id, now)
     if request is not None and session.request is not None and request != session.request:
-        # Trusted location or timezone-data changes also invalidate the displayed summary.
+        # A trusted location change also invalidates the displayed summary.
         session = ReservationSession(
             draft_id=session.draft_id, revision=session.revision + 1, draft=draft, status="collecting"
         )
@@ -368,9 +382,9 @@ def advance_collection(
         )
         return (
             ReservationSession(draft_id=session.draft_id, revision=session.revision, draft=draft, status="collecting"),
-            "To complete your reservation draft:\n"
+            "To request a parking space, please provide:\n"
             + "\n".join(issues)
-            + "\nUse full YYYY-MM-DD HH:MM dates and an explicit timezone/offset. /clear FIELD removes a value; /cancel cancels the draft. No request has been submitted."
+            + "\nI'll show your details for you to check before you choose a space and send the request to the administrator. Your hours start at submission. No request has been sent yet."
             if reply_needed
             else "",
         )

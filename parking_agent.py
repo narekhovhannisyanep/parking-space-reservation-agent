@@ -48,6 +48,7 @@ from reservation_collection import (
     ReservationSession,
     advance_collection,
     confirmation_summary,
+    duration_period,
     extraction_messages,
     is_collection_control,
     parse_extraction,
@@ -79,7 +80,7 @@ class ParkingState(ParkingMessages):
     # All IDs offered since the latest fresh availability request, for "other options".
     offer_round_ids: list[str] = field(default_factory=list)
     privacy_values: list[str] = field(default_factory=list)
-    offer_period: list[str] = field(default_factory=list)
+    offer_duration_hours: float | None = None
     refresh_options: bool = False
     submission: dict = field(default_factory=dict)
     administrator_payload: dict = field(default_factory=dict)
@@ -329,12 +330,10 @@ class ParkingSpaceReservationAgent:
                 )
             ),
         }
-        if text.strip() in {"/cancel", "/new"} or any(
-            getattr(previous.draft, field) != getattr(session.draft, field) for field in ("start", "end", "timezone")
-        ):
+        if text.strip().lower() in {"/cancel", "/new"} or previous.draft.duration_hours != session.draft.duration_hours:
             updates["offered_space_ids"] = []
             updates["offer_round_ids"] = []
-            updates["offer_period"] = []
+            updates["offer_duration_hours"] = None
         return updates
 
     @staticmethod
@@ -349,15 +348,20 @@ class ParkingSpaceReservationAgent:
         if row is None:
             return "This request is unavailable after the startup reset. No approval can be applied. Use /new for a new request."
         prefix = f"Request {row.request_id}, space {row.space_id}: "
+        period = f"Period (UTC): {row.request.start.isoformat()} to {row.request.end.isoformat()}. "
         if row.status == "pending":
             return (
                 prefix
-                + "pending human administrator review. The space is held for your period, not approved or recorded. Review in Studio Graph mode. Editing/cancellation is unavailable while waiting."
+                + "pending human administrator review. "
+                + period
+                + "The space is held, but not approved or recorded. Your hours have started; waiting for review counts toward them. Review in Studio Graph mode. Editing/cancellation is unavailable while waiting."
             )
         if row.status == "approved":
             return (
                 prefix
-                + f"approved by the human administrator at {row.approval_time.isoformat() if row.approval_time else ''}. The space remains allocated for your period. This reservation has not been recorded to a file; Stage 3 recording is not implemented. Use /new for a separate request."
+                + f"approved by the human administrator at {row.approval_time.isoformat() if row.approval_time else ''}. "
+                + period
+                + "The space remains allocated for this period. This reservation has not been recorded to a file; Stage 3 recording is not implemented. Use /new for a separate request."
             )
         if row.status == "refused":
             return (
@@ -366,7 +370,7 @@ class ParkingSpaceReservationAgent:
             )
         return (
             prefix
-            + "cannot be approved because its reservation start has passed. The hold has been released; nothing has been recorded. Use /new for a new period."
+            + "cannot be approved because its reservation period has ended. The hold has been released; nothing has been recorded. Use /new for a new request."
         )
 
     def _operational_input(self, state: ParkingState, text: str, config: RunnableConfig) -> dict | None:
@@ -386,7 +390,7 @@ class ParkingSpaceReservationAgent:
         if command.lower() == "/options":
             return {
                 "reservation_reply": (
-                    "Your details are confirmed. Select one currently offered space with /submit SPACE_ID."
+                    "Your details are confirmed. Select one currently offered space with /submit SPACE_ID. Your hours start when submission succeeds."
                     if self._reservation_session(state).status == "ready"
                     else "Current suggestions only. Confirm your details, then select an offered space with /submit SPACE_ID."
                 ),
@@ -398,21 +402,19 @@ class ParkingSpaceReservationAgent:
         session = self._reservation_session(state)
         base = {"retrieval_context": "", "refresh_options": False}
         if session.status != "ready" or session.request is None:
-            return {
-                **base,
-                "reservation_reply": "Collect and confirm your reservation details before submitting. User confirmation is not administrator approval.",
-            }
+            # Start/continue collection with actionable missing-field questions, or
+            # display the complete unconfirmed summary. Never submit implicitly.
+            return self._collection_result(state, text, ReservationExtraction(intent="reservation"))
         selected = re.fullmatch(r"/submit ([A-Za-z0-9][A-Za-z0-9_-]{0,63})", command, flags=re.IGNORECASE)
         if selected is None:
             return {**base, "reservation_reply": "Use /submit SPACE_ID with exactly one currently offered space ID."}
         current, issues = validate_draft(session, self.config.context.location_id, self._clock())
         if issues or current != session.request:
             return self._collection_result(state, "/confirm", ReservationExtraction())
-        period = [session.request.start.isoformat(), session.request.end.isoformat()]
-        if selected[1] not in state.offered_space_ids or period != state.offer_period:
+        if selected[1] not in state.offered_space_ids or session.request.duration_hours != state.offer_duration_hours:
             return {
                 **base,
-                "reservation_reply": "Choose a currently offered option for your confirmed period. Send /options, then /submit SPACE_ID.",
+                "reservation_reply": "Choose a currently offered option for your confirmed duration. Send /options, then /submit SPACE_ID.",
             }
         if not self.graph.checkpointer and not config.get("configurable", {}).get("__pregel_checkpointer"):
             # Agent Server supplies the runtime saver; standalone graphs must inject one.
@@ -534,13 +536,14 @@ class ParkingSpaceReservationAgent:
         previous = state.offer_round_ids if follow_up else []
         try:
             request = self._reservation_session(state).request
-            period = [request.start.isoformat(), request.end.isoformat()] if request else []
+            start, end = duration_period(request.duration_hours, self._clock()) if request else (None, None)
+            period = [start.isoformat(), end.isoformat()] if start is not None and end is not None else []
             availability = state.refresh_options or asks_availability(state.messages, self.config.context)
             blocked = (
                 self.reservation_store.blocked_spaces(
                     self.config.context.location_id,
-                    request.start if request else None,
-                    request.end if request else None,
+                    start,
+                    end,
                 )
                 if availability
                 else []
@@ -568,7 +571,9 @@ class ParkingSpaceReservationAgent:
         if options is not None:
             updates["offered_space_ids"] = options
             updates["offer_round_ids"] = list(dict.fromkeys([*previous, *options]))
-            updates["offer_period"] = period
+            # A preview starts now, but does not fix submission's start or expire
+            # merely because the conversation takes time. Hold rechecks its own period.
+            updates["offer_duration_hours"] = request.duration_hours if request else None
         return updates
 
     def _route_response(self, state: ParkingState) -> Literal["administrator_agent", "administrator_review", "__end__"]:
