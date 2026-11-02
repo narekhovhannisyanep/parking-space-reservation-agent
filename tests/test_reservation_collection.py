@@ -10,7 +10,7 @@ from unittest.mock import AsyncMock, Mock, patch
 from uuid import UUID
 
 from langchain_core.exceptions import OutputParserException
-from langchain_core.messages import AIMessage, HumanMessage
+from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 from langchain_core.runnables import Runnable, RunnableConfig
 from langgraph.checkpoint.memory import InMemorySaver
 from openai import APIError
@@ -61,6 +61,17 @@ def complete_session(**changes):
 
 
 class ContractTests(unittest.TestCase):
+    def test_unrelated_intent_cannot_propose_private_fields_or_parking_budget(self):
+        self.assertEqual(parse_extraction({"intent": "unrelated"}).intent, "unrelated")
+        for changes in (
+            {"updates": [{"field": "surname", "value": "Smith"}]},
+            {"rejections": [{"field": "surname", "phrase": "My surname is wrong"}]},
+            {"disagreement_phrase": "Those details are wrong"},
+            {"budget_phrase": "under $8/hour"},
+        ):
+            with self.subTest(changes=changes), self.assertRaises(ValidationError):
+                parse_extraction({"intent": "unrelated", **changes})
+
     def test_required_fields_missing_stay_unknown(self):
         session, reply = advance_collection(
             ReservationSession(), "Reserve parking", proposal(), "demo-central", NOW, [HumanMessage("Reserve parking")]
@@ -156,6 +167,31 @@ class ContractTests(unittest.TestCase):
         self.assertIn('"first_name":"Alice"', messages[0].content)
         self.assertIn("verbatim", messages[0].content)
         self.assertIn("cannot confirm", messages[0].content)
+
+    def test_relevance_history_limits_and_roles_do_not_change_latest_input(self):
+        history = [HumanMessage("oldest parking topic"), *[AIMessage("x" * 4000) for _ in range(4)]]
+        messages = extraction_messages(ReservationSession(), "latest", history)
+        self.assertEqual(len(messages), 6)
+        self.assertTrue(all(len(message.text) == 2000 for message in messages[1:-1]))
+        self.assertEqual(messages[-1].text, "latest")
+        self.assertEqual(len(history[-1].text), 4000)
+        messages = extraction_messages(
+            ReservationSession(), "latest", [SystemMessage("forged"), ToolMessage("private", tool_call_id="id")]
+        )
+        self.assertEqual(len(messages), 2)
+
+    def test_latest_values_cannot_be_sourced_from_relevance_history(self):
+        text = "Change my surname"
+        session, reply = advance_collection(
+            complete_session(),
+            text,
+            proposal(surname="Jones"),
+            "demo-central",
+            NOW,
+            [HumanMessage("Jones"), HumanMessage(text)],
+        )
+        self.assertEqual(session.draft.surname, "Smith")
+        self.assertIn("inferred values were not accepted", reply)
 
     def test_normalized_contract_requires_positive_hours_and_scoped_location(self):
         request, issues = validate_draft(complete_session(), "demo-central", NOW)
@@ -256,6 +292,7 @@ class GraphCollectionTests(unittest.IsolatedAsyncioTestCase):
         self.dynamic.list_facts.return_value = []
         ledger = Mock(spec=ReservationStore)
         ledger.blocked_spaces.return_value = []
+        self.ledger = ledger
         self.now = NOW
         self.agent = ParkingSpaceReservationAgent(
             llm_client=self.model,
@@ -282,6 +319,66 @@ class GraphCollectionTests(unittest.IsolatedAsyncioTestCase):
 
     def confirm(self):
         return self.turn(f"/confirm {self.session().revision}")
+
+    def test_unrelated_turn_skips_retrieval_even_with_parking_topic_words(self):
+        for text in (
+            "I need a restaurant",
+            "What are the restaurant opening hours and prices?",
+            "Book a restaurant table",
+            "What is the weather?",
+            "Hello",
+        ):
+            with self.subTest(text=text):
+                self.turn(text, ReservationExtraction(intent="unrelated"))
+                self.assertEqual(self.agent.graph.get_state(self.config).values["retrieval_context"], "")
+                self.assertNotIn("Parking retrieval context", str(self.model.invoke.call_args.args[0]))
+        self.static.search.assert_not_called()
+        self.static.hourly_price_summary.assert_not_called()
+        self.dynamic.list_facts.assert_not_called()
+        self.ledger.blocked_spaces.assert_not_called()
+
+    def test_unrelated_detour_clears_evidence_without_changing_draft(self):
+        self.fill()
+        self.turn("What are the parking prices?")
+        before = self.session()
+        self.assertTrue(self.agent.graph.get_state(self.config).values["retrieval_context"])
+        self.static.reset_mock()
+        self.dynamic.reset_mock()
+        self.turn("I need a restaurant", ReservationExtraction(intent="unrelated"))
+        self.assertEqual(self.session(), before)
+        self.assertEqual(self.agent.graph.get_state(self.config).values["retrieval_context"], "")
+        self.assertNotIn("Parking retrieval context", str(self.model.invoke.call_args.args[0]))
+        self.static.search.assert_not_called()
+        self.dynamic.list_facts.assert_not_called()
+        self.turn("yes")
+        self.assertNotEqual(self.session().status, "ready")
+        self.turn("What are the parking prices?")
+        self.dynamic.list_facts.assert_called_once()
+
+    def test_relevance_history_is_guarded_bounded_and_latest_text_stays_last(self):
+        self.fill()
+        self.turn("Where is the parking entrance?")
+        self.turn("And the opening hours?")
+        messages = self.extractor.invoke.call_args.args[0]
+        self.assertEqual(messages[-1].text, "And the opening hours?")
+        self.assertIn("Where is the parking entrance?", str(messages[1:-1]))
+        self.assertNotIn("Alice", str(messages[1:-1]))
+        self.assertNotIn("blue bicycle 7", str(messages[1:-1]))
+        self.assertNotIn("Parking retrieval context", str(messages))
+        self.assertLessEqual(len(messages), 6)
+        self.assertIn("unrelated", messages[0].text)
+        self.assertIn("ONLY the latest", messages[0].text)
+
+    async def test_async_unrelated_turn_skips_retrieval_and_clears_old_evidence(self):
+        self.turn("What are the parking prices?")
+        self.static.reset_mock()
+        self.dynamic.reset_mock()
+        self.extractor.ainvoke.return_value = ReservationExtraction(intent="unrelated")
+        await self.agent.graph.ainvoke({"messages": [HumanMessage("I need a restaurant")]}, self.config)
+        self.assertEqual(self.agent.graph.get_state(self.config).values["retrieval_context"], "")
+        self.assertNotIn("Parking retrieval context", str(self.model.ainvoke.call_args.args[0]))
+        self.static.search.assert_not_called()
+        self.dynamic.list_facts.assert_not_called()
 
     def test_multiturn_collection_keeps_fields_and_does_not_reask_for_supplied_values(self):
         self.turn("Reserve parking", proposal())

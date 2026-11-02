@@ -5,7 +5,7 @@ import json
 import os
 import re
 import sqlite3
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from threading import Lock
@@ -17,7 +17,7 @@ from langchain_core.documents import Document
 from langchain_core.embeddings import Embeddings
 from langchain_core.exceptions import OutputParserException
 from langchain_core.language_models.chat_models import BaseChatModel
-from langchain_core.messages import AIMessage, AnyMessage
+from langchain_core.messages import AIMessage, AnyMessage, BaseMessage
 from langchain_core.runnables import Runnable, RunnableConfig, RunnableLambda
 from langchain_openai import AzureChatOpenAI
 from langgraph.checkpoint.base import BaseCheckpointSaver
@@ -79,6 +79,7 @@ class ParkingState(ParkingMessages):
     """Internal evidence is replaced each turn, not appended to conversation history."""
 
     retrieval_context: str = ""
+    turn_intent: Literal["information", "reservation", "unrelated"] = "information"
     reservation: dict = field(default_factory=dict)
     reservation_reply: str = ""
     offered_space_ids: list[str] = field(default_factory=list)
@@ -341,6 +342,18 @@ class ParkingSpaceReservationAgent:
                 "refresh_options": False,
                 "revalidate_options": False,
                 "budget_pending": state.budget_pending or budget_cue(text),
+                "turn_intent": "reservation",
+            }
+        if proposal.intent == "unrelated":
+            # An off-topic detour must not reinterpret cost cues, change a draft,
+            # refresh offers, or reuse the previous turn's retrieval evidence.
+            return {
+                "reservation": previous.model_dump(mode="json"),
+                "reservation_reply": "",
+                "retrieval_context": "",
+                "turn_intent": "unrelated",
+                "refresh_options": False,
+                "revalidate_options": False,
             }
         session, reply = advance_collection(
             previous,
@@ -355,6 +368,7 @@ class ParkingSpaceReservationAgent:
         )
         updates: dict = {
             "reservation": session.model_dump(mode="json"),
+            "turn_intent": proposal.intent,
             "budget": state.budget,
             "budget_pending": state.budget_pending,
             "reservation_reply": reply,
@@ -609,8 +623,13 @@ class ParkingSpaceReservationAgent:
             text = self._collection_input(state)
             operational = self._operational_input(state, text, config)
             if operational is not None:
-                return operational
+                return {**operational, "turn_intent": "reservation"}
             safe_text = self.privacy_guard.redact(text, keep_names=True)
+            messages = (
+                self._extraction_messages(state, safe_text)
+                if safe_text.strip() and not is_collection_control(text)
+                else []
+            )
         except GuardrailError:
             return self._guardrail_failure(state)
         except (OSError, sqlite3.Error):
@@ -618,16 +637,20 @@ class ParkingSpaceReservationAgent:
                 "Unable to read or submit the reservation. Check storage and retry; do not assume submission succeeded."
             ) from None
         if not text.strip():
-            return {"reservation_reply": ""}
+            return {
+                "reservation_reply": "",
+                "retrieval_context": "",
+                "turn_intent": "unrelated",
+                "refresh_options": False,
+                "revalidate_options": False,
+            }
         if not safe_text.strip():
             return self._guardrail_failure(state)
         if is_collection_control(text):
             return self._collection_result(state, text, ReservationExtraction())
         extractor = self._get_reservation_extractor()
         try:
-            result = extractor.invoke(
-                extraction_messages(self._reservation_session(state), safe_text), config=guarded_model_config(config)
-            )
+            result = extractor.invoke(messages, config=guarded_model_config(config))
         except (APIError, ValidationError, OutputParserException):
             return self._collection_result(state, text, None)
         return self._collection_result(state, safe_text, result)
@@ -638,8 +661,13 @@ class ParkingSpaceReservationAgent:
             text = self._collection_input(state)
             operational = await asyncio.to_thread(self._operational_input, state, text, config)
             if operational is not None:
-                return operational
+                return {**operational, "turn_intent": "reservation"}
             safe_text = await asyncio.to_thread(self.privacy_guard.redact, text, keep_names=True)
+            messages = (
+                await asyncio.to_thread(self._extraction_messages, state, safe_text)
+                if safe_text.strip() and not is_collection_control(text)
+                else []
+            )
         except GuardrailError:
             return self._guardrail_failure(state)
         except (OSError, sqlite3.Error):
@@ -647,25 +675,37 @@ class ParkingSpaceReservationAgent:
                 "Unable to read or submit the reservation. Check storage and retry; do not assume submission succeeded."
             ) from None
         if not text.strip():
-            return {"reservation_reply": ""}
+            return {
+                "reservation_reply": "",
+                "retrieval_context": "",
+                "turn_intent": "unrelated",
+                "refresh_options": False,
+                "revalidate_options": False,
+            }
         if not safe_text.strip():
             return self._guardrail_failure(state)
         if is_collection_control(text):
             return self._collection_result(state, text, ReservationExtraction())
         extractor = await asyncio.to_thread(self._get_reservation_extractor)
         try:
-            result = await extractor.ainvoke(
-                extraction_messages(self._reservation_session(state), safe_text), config=guarded_model_config(config)
-            )
+            result = await extractor.ainvoke(messages, config=guarded_model_config(config))
         except (APIError, ValidationError, OutputParserException):
             return self._collection_result(state, text, None)
         return self._collection_result(state, safe_text, result)
+
+    def _extraction_messages(self, state: ParkingState, safe_text: str) -> list[BaseMessage]:
+        index = latest_user_index(state.messages)
+        history = state.messages[max(0, index - 4) : index] if index is not None else []
+        guarded = self.privacy_guard.public_messages(history, self._private_values(state))
+        return extraction_messages(self._reservation_session(state), safe_text, guarded)
 
     def _route_collection(
         self, state: ParkingState
     ) -> Literal["context_augmentation", "parking_assitant", "record_approved_reservation"]:
         if state.recording_requested:
             return "record_approved_reservation"
+        if state.turn_intent == "unrelated":
+            return "parking_assitant"
         if state.budget_pending:
             return "parking_assitant"
         if state.refresh_options:
@@ -716,6 +756,8 @@ class ParkingSpaceReservationAgent:
         return updates
 
     def _context_augmentation(self, state: ParkingState) -> dict:
+        if state.turn_intent == "unrelated":
+            return {"retrieval_context": "", "refresh_options": False, "revalidate_options": False}
         # Exclusions come only from code-tracked offers, never from model replies.
         follow_up = asks_other_options(state.messages, self.config.context)
         candidates = state.offer_candidate_ids or state.offered_space_ids
@@ -960,7 +1002,7 @@ class ParkingSpaceReservationAgent:
         model = self._get_llm_client()
         try:
             history = self.privacy_guard.public_messages(state.messages, self._private_values(state))
-            messages = augmented_messages(self.config.system_prompt, history, state.retrieval_context)
+            messages = self._answer_messages(state, history)
         except GuardrailError:
             return self._collection_response(ParkingState(reservation_reply=SAFE_REPLY))
         try:
@@ -973,10 +1015,25 @@ class ParkingSpaceReservationAgent:
 
     @staticmethod
     def _append_priced_evidence(state: ParkingState, response: AIMessage) -> AIMessage:
-        suffix = priced_options_reply(state.retrieval_context)
+        suffix = priced_options_reply(state.retrieval_context) if state.turn_intent != "unrelated" else ""
         if suffix and response.text != SAFE_REPLY:
             response = AIMessage(response.text + "\n\n" + suffix, id=response.id or str(uuid4()))
         return response
+
+    def _answer_messages(self, state: ParkingState, history: Sequence[AnyMessage]) -> list[BaseMessage]:
+        prompt = self.config.system_prompt
+        context = state.retrieval_context
+        if state.turn_intent == "unrelated":
+            context = ""
+            index = latest_user_index(history)
+            if index is not None and history[index].text.strip():
+                prompt += (
+                    "\nThe latest turn does not request parking information or reservation changes. "
+                    "Respond briefly to greetings; for unrelated requests, explain your parking-only scope "
+                    "and optionally ask whether parking help is wanted. Do not volunteer parking facts, "
+                    "prices, hours, availability, or previous options, and do not ask for reservation details."
+                )
+        return augmented_messages(prompt, history, context)
 
     async def _aparking_assitant(self, state: ParkingState, config: RunnableConfig) -> dict:
         if state.reservation_reply:
@@ -987,7 +1044,7 @@ class ParkingSpaceReservationAgent:
             history = await asyncio.to_thread(
                 self.privacy_guard.public_messages, state.messages, self._private_values(state)
             )
-            messages = augmented_messages(self.config.system_prompt, history, state.retrieval_context)
+            messages = self._answer_messages(state, history)
         except GuardrailError:
             return self._collection_response(ParkingState(reservation_reply=SAFE_REPLY))
         try:

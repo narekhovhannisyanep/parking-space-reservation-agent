@@ -206,6 +206,15 @@ as code are extra-credit artifacts; see the baseline for details.
 - **Deterministic retrieval:** Python retrieves evidence before information answers;
   retrieval is not an LLM-selected tool. Personal reservation details and chats are
   not ingested into either public-information store.
+- **Relevance-aware retrieval (user-approved correction):** use the existing structured
+  extraction call to distinguish parking information/reservation from unrelated turns,
+  not a new classifier call, package or agent. Bounded privacy-guarded recent messages
+  support topic follow-ups; extraction still sources fields/budgets only from the latest
+  sanitized text. Python skips retrieval and clears turn evidence for unrelated turns,
+  preserving draft/confirmation/options/budgets. Greetings or a brief parking-scope
+  clarification need no inventory evidence. Existing submitted-outcome and explicit-command
+  behavior stays code-controlled. Model relevance/answer wording is not universal intent
+  accuracy or an authorization boundary.
 - **Approved privacy slice:** local presidio-analyzer and a pinned spaCy English model
   are approved dependencies. Necessary reservation details may still reach Azure/DIAL
   extraction; unrelated detected sensitive data is filtered. General-answer history
@@ -342,6 +351,18 @@ as code are extra-credit artifacts; see the baseline for details.
   checks inspect parsed output before fallback and verify accepted wording plus unchanged
   canonical facts. Mocked stores and disabled tracing isolate these checks; they are not
   live full-workflow, accuracy, load, or security tests.
+- The extraction schema additionally supports `unrelated` intent. The existing call
+  gets at most four prior privacy-guarded text messages of at most 2,000 characters each
+  for topic interpretation, not extraction of earlier values. `turn_intent` is replaced
+  per turn; unrelated turns bypass context augmentation, cannot propose private updates
+  or parking budgets, and receive guarded scope/greeting instructions without evidence
+  or appended priced options. Shared topic words alone do not establish parking relevance.
+  The relevance-correction regression completed 400 tests (391 passed, nine opt-in
+  live checks skipped) in 312.276 s; Ruff lint/format and ty checks passed. All nine
+  live components passed separately, including eight relevance cases and the real-model
+  restaurant request/follow-up graph bypass. Both new live tests passed again. Stores
+  were mocked and tracing disabled; this is not universal intent accuracy, remeasured
+  RAG quality/latency, new browser validation or live-provider load evidence.
 - Privacy checks are code-enforced at public ingestion/evidence, model-copy and response
   boundaries using local Presidio/spaCy plus rules/known values. Imports do not load NLP;
   startup prepares it before databases. Missing/broken detection fails closed; runtime
@@ -435,8 +456,11 @@ as code are extra-credit artifacts; see the baseline for details.
   Screenshot-discovered regressions in option continuity, space-versus-vehicle extraction,
   and negative/vague corrections have been fixed; `/options` is now optional. The
   requested dark English PowerPoint (~12–14 slides/10 minutes, author Narek Hovhannisyan)
-  awaits replacement demo screenshots in `presentation/` after the user's fresh Studio test.
-  Preserve the existing bug screenshots as diagnostic evidence, not successful demo evidence.
+  remains to be created. The user removed the bug-related screenshots after the issues
+  were solved and confirmed that all current screenshots in `presentation/` are
+  presentation assets approved for use in the PowerPoint. Do not label them diagnostic
+  bug evidence or require replacement screenshots. This asset status does not change
+  the documented test results or validation limits.
   For the earlier demo, the operator must select `parking_spaces_v3` in the real
   `.env` and seed the new collection explicitly or at startup as documented in README;
   real `.env` and populated project data have not been changed automatically.

@@ -127,12 +127,14 @@ add a separate public API or UI. Startup waits for both databases and baseline e
 | `system_validation.py`, `STAGE4_VALIDATION.md` | Isolated full-system HTTP/stdio scenarios, local load, opt-in live pipeline smoke and measured report |
 | `storage/` | Chroma static inventory, SQLite dynamic facts, configuration, and explicit seeding |
 | `tests/` | Offline storage, graph, collection, and opt-in live-model checks |
+| `presentation/` | User-approved PowerPoint screenshots of the reservation workflow and graph |
 
 Current graph:
 
 ```text
 START → reservation_collection
-  information turn → context_augmentation → parking_assitant → END
+  parking information turn → context_augmentation → parking_assitant → END
+  unrelated turn / greeting → parking_assitant (no retrieval context) → END
   incomplete request mentioning availability/reservation → context_augmentation → parking_assitant → END
   collection reply → parking_assitant → END
   successful confirmation → context_augmentation (recheck existing options) → parking_assitant → END
@@ -280,14 +282,33 @@ pending/approved periods and is never included in public evidence.
 
 ### Information retrieval
 
-For information turns, code builds queries from fixed English public-topic terms,
+The existing structured extraction call distinguishes parking `information`,
+`reservation`, and `unrelated` turns; there is no extra classifier call or agent.
+It sees at most four privacy-guarded prior messages (2,000 characters each) to interpret
+follow-ups, plus the existing private draft and latest sanitized extraction text.
+Earlier messages are topic context only, never a source for field/budget updates.
+“I need a restaurant” and restaurant hours/prices/table bookings bypass retrieval;
+“I need parking for a restaurant visit” remains a parking request. “And the opening
+hours?” follows the topic of the conversation, rather than matching the word “hours” alone.
+Python skips database/embedding retrieval and clears per-turn evidence on unrelated turns.
+The guarded answer model receives scope-clarification instructions without parking evidence;
+greetings receive a brief greeting. Drafts, confirmed choices and budgets are preserved,
+including a pending budget clarification; unrelated cost cues cannot modify them.
+Returning to parking or using `/options` resumes the ordinary workflow. Existing submitted
+requests retain their code-controlled outcome behavior until `/new`.
+Relevance and general-answer wording are model-guided, not universal intent accuracy or
+a security boundary. A misclassified turn can still take the wrong branch.
+
+For parking information turns, code builds queries from fixed English public-topic terms,
 never raw user text or draft values. Terms cover entrance, gate, lift, stairs, lobby,
 pedestrian walkway, outdoor area, ground/first/second level, compass directions, wall,
 fence, corner, location/directions, hours, prices, and availability. Location terms are
 taken from the public inventory descriptions, so stated preferences affect ranking.
 Request wording includes spaces/spots/places/slots, park (verb), free (except "free of
-charge"), vacant, reserve/book, and options; "Tell me about parking" is information only. Unknown topics use `parking information` and reuse the bounded
-startup static evidence. Location/directions topics still use semantic retrieval.
+charge"), vacant, reserve/book, and options; "Tell me about parking" is information only.
+Parking questions without a matching fixed topic use `parking information` and reuse
+the bounded startup static evidence; unrelated questions no longer take this fallback.
+Location/directions topics still use semantic retrieval.
 Hours/prices-only turns include requested hours and/or an aggregate Chroma hourly
 price range read from scoped metadata, not space
 inventory or unrelated availability snapshots. Dynamic facts
@@ -617,6 +638,14 @@ with `function_calling` and `gpt-6-luna-2026-09-22` (VPN connected). No provider
 or static-data reset/reseeding was needed. See the verification evidence and limits above.
 Live answer accuracy is measured separately in [RAG_EVALUATION.md](RAG_EVALUATION.md).
 
+On **2026-11-02**, all nine current live component tests passed after the relevance
+routing correction, including eight topic-classification cases and the restaurant
+request/follow-up through the real graph with mocked stores and no retrieval.
+The two new relevance tests also passed a repeat run. The full offline regression
+passed 391 tests (nine opt-in live tests skipped), with lint/format/types passing.
+This does not remeasure the historical RAG benchmark or validate a fresh Studio browser
+session; see [RAG_EVALUATION.md](RAG_EVALUATION.md) for methods and limits.
+
 Opt-in extraction and sync/async administrator smoke tests (synthetic data, mocked stores,
 no tracing; no pending hold or actual human decision is created):
 
@@ -745,6 +774,8 @@ credential patterns, known draft values, and labeled-value checks:
   Other detected sensitive data is replaced by offset-preserving spaces. Extracted
   updates must be verbatim in sanitized text, so removed values cannot become draft
   fields. Conflicting required values need clarification.
+  The same extraction call now receives bounded privacy-guarded recent messages for
+  relevance classification, without retrieval evidence or raw history metadata.
   PERSON spans are permitted for name extraction; this local filter cannot reliably
   distinguish unrelated names in that same message. Do not include unrelated names.
 - General-answer calls use sanitized, text-only history copies, excluding message
@@ -819,8 +850,6 @@ local load regression at concurrency five and refreshed ten-way contention check
 these do not replace the historical 90-conversation benchmark or establish provider capacity.
 Ruff lint/format, ty and whitespace checks passed. Tests used disposable stores, without
 changing real `.env`, populated project data, the dependency lockfile, or baseline requirements.
-Current demo screenshots in `presentation/` are diagnostic bug evidence; replace them
-after a fresh Studio test before using them as successful presentation evidence.
 
 Run the synthetic privacy evaluation with `.venv/bin/python -m guardrail_evaluation`.
 It prints case IDs/counts, coverage metrics, and warm detector latency; no files are
@@ -880,6 +909,21 @@ a new administrator channel. Load/live checks stay explicit rather than running
 as part of ordinary unit-test discovery. See [STAGE4_VALIDATION.md](STAGE4_VALIDATION.md)
 for exact methods, timings, failure/retry/restart scenarios, limits and the narrow
 lazy-storage-export fix that avoids loading Chroma/provider clients in the recorder.
+
+## Presentation materials
+
+The PowerPoint is an extra-credit artifact explaining how the solution works, with
+relevant screenshots. The agreed deck is in English with a dark theme, approximately
+12–14 slides for 10 minutes, authored by Narek Hovhannisyan; the PowerPoint file remains
+to be created.
+
+The user removed the bug-related screenshots after the issues were solved and confirmed
+that **all current screenshots in [presentation/](presentation/) may be used in the
+PowerPoint**. They show parking suggestions, detail confirmation, administrator review,
+approval with a recording-success reply, refusal, and the LangGraph diagram. They are
+presentation materials, not diagnostic bug evidence, and do not need replacement on
+that basis. Screenshot availability does not change the separately documented test
+results or validation limits.
 
 ## Selected deployment and handoff
 

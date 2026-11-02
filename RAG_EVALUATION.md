@@ -159,6 +159,35 @@ component checks skipped**. Ruff lint/format and ty checks passed. Long non-cent
 decimal amounts are rejected by inspecting their original digits, not rounded with
 a floating-point or decimal precision context.
 
+## Relevance-routing correction (2026-11-02)
+
+The screenshot request “I need a restaurant” exposed an overly broad fallback:
+ordinary chat without a collection reply entered retrieval, and an unmatched topic
+reused three startup parking records. The existing structured extraction schema now
+distinguishes parking information/reservation from `unrelated` turns. Python skips
+retrieval and clears per-turn evidence for unrelated messages, preserving private
+drafts, confirmation, browse options and optional budgets. No classifier call,
+dependency, provider change or project-data reset was added.
+
+Offline regressions cover sync/async bypass, shared words (restaurant hours/prices/book),
+stale-evidence clearing, budget/confirmation/option continuity and bounded guarded
+history. The complete suite passed **391 tests, with nine opt-in live tests skipped**
+(400 total, 312.276 s). Ruff lint/format and ty checks passed.
+
+All **nine live component checks passed** separately (65.799 s), using the existing
+`function_calling` / `gpt-6-luna-2026-09-22` configuration with tracing disabled and
+mocked stores. The relevance test checked eight explicit cases: three unrelated
+restaurant requests, a restaurant-visit parking request, general parking information,
+opening-hours follow-ups after parking and restaurant discussion, and other parking
+options. The screenshot request plus its hours follow-up also passed through the real
+model graph with no storage retrieval, empty evidence and parking-scope replies.
+Both new live tests passed again (13.245 s and 8.785 s).
+
+These are small synthetic smoke checks, **not universal intent accuracy**, new browser
+validation or live-provider load evidence. Relevance and answer wording remain
+model-guided; a misclassification can still select the wrong branch. Retrieval quality
+and latency tables above predate this routing correction and were not remeasured.
+
 ## Historical results (2026-10-30, `gpt-6.1-sol-2026-09-29`, `text-embedding-3-small-1`)
 
 ### Retrieval, before and after the query-vocabulary change

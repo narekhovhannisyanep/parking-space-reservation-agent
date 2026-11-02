@@ -111,6 +111,40 @@ class ConversationRegressionTests(unittest.TestCase):
     def confirm(self):
         return self.turn(f"/confirm {self.state()['reservation']['revision']}")
 
+    def test_unrelated_detour_preserves_confirmed_options_and_budget(self):
+        self.turn("Parking spaces for shopping bags up to $8/hour.")
+        self.fill()
+        self.confirm()
+        before = self.state()
+        self.static.reset_mock()
+        reply = self.turn("What are the restaurant prices?", ReservationExtraction(intent="unrelated"))["messages"][
+            -1
+        ].text
+        after = self.state()
+        for key in (
+            "reservation",
+            "budget",
+            "offered_space_ids",
+            "offer_candidate_ids",
+            "offer_query",
+            "offer_round_ids",
+            "offer_duration_hours",
+        ):
+            self.assertEqual(after[key], before[key])
+        self.assertEqual(after["retrieval_context"], "")
+        self.assertNotIn("Current parking options", reply)
+        self.static.search.assert_not_called()
+        self.turn("/options")
+        self.assertEqual(self.state()["offered_space_ids"], before["offered_space_ids"])
+
+    def test_unrelated_cost_cue_does_not_modify_pending_parking_budget(self):
+        self.turn("Parking under about $8/hour.")
+        self.assertTrue(self.state()["budget_pending"])
+        self.turn("Restaurant meals under $20", ReservationExtraction(intent="unrelated"))
+        self.assertTrue(self.state()["budget_pending"])
+        self.assertEqual(self.state()["retrieval_context"], "")
+        self.assertEqual(self.model.invoke.call_args.args[0][-1].text, "Restaurant meals under $20")
+
     def test_space_selection_cannot_become_vehicle_even_with_bad_model_output(self):
         self.turn("Any parking spaces for shopping bags?")
         first = self.state()["offered_space_ids"][:]

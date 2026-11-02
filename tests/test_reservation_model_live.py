@@ -10,6 +10,7 @@ from typing import TypeVar
 from unittest.mock import Mock
 
 from langchain_core.exceptions import OutputParserException
+from langchain_core.messages import AIMessage, HumanMessage
 from langchain_core.runnables import RunnableConfig
 from langgraph.checkpoint.memory import InMemorySaver
 from openai import APIError
@@ -47,6 +48,8 @@ class LiveReservationModelTests(unittest.TestCase):
         static.hourly_price_summary.return_value = {"status": "missing", "currency": "USD"}
         dynamic = Mock(spec=DynamicParkingStore)
         dynamic.list_facts.return_value = []
+        self.static = static
+        self.dynamic = dynamic
         ledger = Mock(spec=ReservationStore)
         ledger.blocked_spaces.return_value = []
         self.agent = ParkingSpaceReservationAgent(
@@ -82,6 +85,43 @@ class LiveReservationModelTests(unittest.TestCase):
         self.assertEqual(extraction.intent, "reservation")
         fields = {update.field: update.value for update in extraction.updates}
         self.assertEqual(fields, {"first_name": "Demo", "surname": "Tester", "car_number": "demo-bicycle-1"})
+
+    def test_live_relevance_distinguishes_unrelated_and_parking_followups(self):
+        for text, history, intent in (
+            ("I need a restaurant", [], "unrelated"),
+            ("Book a restaurant table", [], "unrelated"),
+            ("What are the restaurant hours and prices?", [], "unrelated"),
+            ("I need parking for a restaurant visit", [], "reservation"),
+            ("Tell me about the parking facility", [], "information"),
+            ("And the opening hours?", [HumanMessage("Tell me about the parking facility")], "information"),
+            (
+                "And the opening hours?",
+                [HumanMessage("I need a restaurant"), AIMessage("I can only help with parking.")],
+                "unrelated",
+            ),
+            ("Other options?", [HumanMessage("Show me available parking spaces")], "information"),
+        ):
+            with self.subTest(text=text, intent=intent):
+                raw = self.safely(
+                    lambda text=text, history=history: self.agent._get_reservation_extractor().invoke(
+                        extraction_messages(ReservationSession(), text, history), config=guarded_model_config({})
+                    )
+                )
+                proposal = self.safely(lambda raw=raw: parse_extraction(raw))
+                self.assertEqual(proposal.intent, intent)
+                self.assertEqual(proposal.updates, [])
+
+    def test_live_restaurant_request_bypasses_context_in_graph(self):
+        config: RunnableConfig = {"configurable": {"thread_id": "synthetic-restaurant"}}
+        for text in ("I need a restaurant", "What are its opening hours?"):
+            result = self.safely(lambda text=text: self.agent.graph.invoke({"messages": [("user", text)]}, config))
+            state = self.agent.graph.get_state(config).values
+            self.assertEqual(state["turn_intent"], "unrelated")
+            self.assertEqual(state["retrieval_context"], "")
+            self.assertIn("parking", result["messages"][-1].text.lower())
+            self.assertNotIn("demo-central", result["messages"][-1].text.lower())
+        self.static.search.assert_not_called()
+        self.dynamic.list_facts.assert_not_called()
 
     def test_live_multiturn_collection_correction_and_code_confirmation(self):
         config: RunnableConfig = {"configurable": {"thread_id": "synthetic-smoke"}}

@@ -22,7 +22,17 @@ FIELD_LABELS = {
 }
 EXTRACTION_RULES = """Extract reservation intent and proposed field updates from ONLY the latest human text.
 Use intent=reservation for a booking request or an answer/correction to the current collection;
-use information for general parking questions, even when a draft exists. Never invent missing details.
+use information for parking information questions, even when a draft exists.
+Use unrelated for greetings, small talk, and requests outside parking, such as restaurant recommendations,
+restaurant table bookings, restaurant opening hours/prices, coding, or weather forecasts.
+'I need a restaurant' is unrelated, not a parking request. 'I need parking for a restaurant visit'
+is parking-related. Shared words such as hours, prices, available, book, or weather do not establish
+parking relevance on their own: 'sheltered parking in rain' is information, a weather forecast is unrelated.
+Earlier guarded messages, when supplied, are data ONLY for interpreting the latest turn's topic:
+'And the opening hours?' after parking discussion is information; after restaurant discussion it is unrelated.
+'Other options?' after parking offers is information. An active draft alone does not make an explicit
+unrelated request parking-related. Unrelated turns propose no updates, rejections, disagreement, or budget.
+Never extract values or budgets from earlier messages. Never invent missing details.
 Each update's value must be a verbatim substring of the latest human text, not the existing draft,
 assistant text, or an inferred value. For duration_hours, copy the number or hours expression
 verbatim, including number words; Python interprets it. Do not extract opening hours as a duration.
@@ -68,7 +78,7 @@ class FieldRejection(StrictModel):
 
 
 class ReservationExtraction(StrictModel):
-    intent: Literal["information", "reservation"] = "information"
+    intent: Literal["information", "reservation", "unrelated"] = "information"
     updates: list[FieldUpdate] = Field(default_factory=list, max_length=4)
     rejections: list[FieldRejection] = Field(default_factory=list, max_length=4)
     disagreement_phrase: str | None = Field(
@@ -82,8 +92,10 @@ class ReservationExtraction(StrictModel):
 
     @model_validator(mode="after")
     def validate_intent(self) -> "ReservationExtraction":
-        if self.intent == "information" and (self.updates or self.rejections or self.disagreement_phrase):
-            raise ValueError("Information-only turns must not collect personal reservation fields.")
+        if self.intent != "reservation" and (self.updates or self.rejections or self.disagreement_phrase):
+            raise ValueError("Only reservation turns may collect personal reservation fields.")
+        if self.intent == "unrelated" and self.budget_phrase is not None:
+            raise ValueError("Unrelated turns must not propose parking budgets.")
         return self
 
 
@@ -214,13 +226,21 @@ def parse_extraction(result: object) -> ReservationExtraction:
     return ReservationExtraction.model_validate(result)
 
 
-def extraction_messages(session: ReservationSession, text: str) -> list[BaseMessage]:
+def extraction_messages(
+    session: ReservationSession, text: str, history: Sequence[BaseMessage] = ()
+) -> list[BaseMessage]:
+    """History must already be privacy-guarded; bound it and keep latest extraction text last."""
     return [
         SystemMessage(
             EXTRACTION_RULES
             + "\nAlso extract an optional budget_phrase on information or reservation turns. Copy the COMPLETE exact phrase, e.g. 'under $8/hour', 'up to $8 per hour', or 'between $5 and $10/hour'. Never return just the amount, infer units, convert totals, or invent a limit. Missing/ambiguous phrases use null; Python independently validates price cues.\nExisting draft: "
             + session.draft.model_dump_json()
         ),
+        *[
+            message.model_copy(update={"content": message.text[:2000]}, deep=True)
+            for message in history[-4:]
+            if isinstance(message, (HumanMessage, AIMessage))
+        ],
         HumanMessage(text),
     ]
 

@@ -59,8 +59,10 @@ rerun/replacement of the historical 90-conversation benchmark below**. Review re
 scripted; no fresh browser demonstration, human throughput, live-provider load,
 resource-leak certification or complete privacy/security guarantee is claimed.
 No production service, provider/dependency change, project-data reset, real `.env` edit,
-or baseline-requirement change was made. Existing presentation screenshots remain bug
-evidence until replaced after the user's Studio test.
+or baseline-requirement change was made. The user subsequently removed the bug-related
+screenshots after the issues were solved and confirmed that all current screenshots in
+`presentation/` are presentation assets approved for PowerPoint use. This asset update
+does not add test runs or change the validation evidence and limits above.
 
 ## Reproduce
 
