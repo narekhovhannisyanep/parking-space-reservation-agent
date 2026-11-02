@@ -24,8 +24,9 @@ Each record requires exactly these fields:
 | `space_id` | Space identity within a location |
 | `location_id` | Location scope |
 | `label` | Human-visible space marking |
-| `description` | Short public directions/information |
+| `description` | Realistic mock location, route, practical benefits and trade-offs |
 | `source` | Source attribution |
+| `hourly_price_cents` | Required integer USD cents/hour, 100–2000 inclusive; never a boolean or inferred default |
 
 Current validation requires trimmed, nonblank strings. IDs contain 1–64
 alphanumeric/dash/underscore characters and start alphanumerically. Description is
@@ -38,14 +39,18 @@ schema validation and operator review, not prove source safety.
 
 `ParkingSpace` generates LangChain documents with IDs `{location_id}:space:{space_id}`.
 Metadata contains the fields except description, plus `record_type=parking_space`
-and integer `schema_version=2`. `SpaceFilters` supports optional exact `space_id`;
+and integer `schema_version=3`. Prices are metadata only, not embedded document text;
+currency is fixed to USD. `SpaceFilters` supports optional exact `space_id` and a
+validated `HourlyBudget` with numeric `$lt`/`$lte`/`$gt`/`$gte` clauses;
 search always retains location/type/schema scope before semantic ranking.
 
-Chroma's default collection is `parking_spaces_v2`. Use a fresh collection when
+Chroma's default collection is `parking_spaces_v3`. Use a fresh collection when
 moving from an older schema: Chroma merges metadata on upsert. See README for seeding.
 The fixture is intentionally limited public space/location evidence, not a complete
-facility knowledge base. Hours/prices remain unknown until provided through public
-Python CRUD; see RAG_EVALUATION.md for measured information coverage and limits.
+facility knowledge base. Hourly prices come solely from Chroma metadata. Missing hours
+remain unknown until provided through Python CRUD. Descriptions are fictional route
+evidence, not certified accessible bays, vehicle-fit flags, or hard feature constraints.
+See RAG_EVALUATION.md for measured information coverage and limits.
 
 At server startup, missing/empty configured collections are immediately seeded from
 the approved mock fixture. Populated collections are reused unchanged. Static-data
@@ -53,7 +58,7 @@ change/approval workflows are outside the agreed scope.
 
 ## Dynamic information (storage and retrieval implemented)
 
-SQLite stores `working_hours`, `prices`, and `availability` as JSON snapshots keyed
+SQLite supplies `working_hours` and `availability` as JSON snapshots keyed
 by `(location_id, kind)`, with UTC `updated_at` write timestamps. CRUD operations
 are transactional. Values must be JSON-compatible with string keys and finite numbers.
 Dynamic storage is recreated empty at each application-server startup; writes require
@@ -61,7 +66,7 @@ explicit Python calls. This reset does not happen for new conversation threads.
 
 Information turns read these snapshots and instruct the model to use them for
 operational facts rather than static prose or earlier chat. Missing/null/omitted
-hours/prices mean unknown. Write timestamps do not prove freshness, and snapshots do not
+hours mean unknown. Write timestamps do not prove freshness, and snapshots do not
 allocate spaces or establish availability for a requested booking period.
 Availability suggestions use a location-wide boolean snapshot or a space-ID/boolean
 map. `False` blocks the applicable space(s); absent snapshots or absent map IDs leave
@@ -70,11 +75,17 @@ and other unsupported shapes fail selection rather than silently offering spaces
 This is a public snapshot contract, separate from the private Stage 2 ledger below.
 The same SQLite startup reset recreates both tables empty.
 
+The legacy Python CRUD kind `prices` remains accepted for API compatibility, but is
+never read into RAG evidence or used for filtering/display. Do not populate it: prices
+have one authoritative source, the reviewed Chroma inventory. Price-only questions read
+scoped metadata to compute a minimum/maximum summary without embeddings or full prose.
+
 Python reads inventory IDs and applies dynamic eligibility before semantic ranking.
 Chroma embeds the fixed public-topic query derived from the latest user message and
-returns up to three eligible similarity matches using a native result limit. No space
-features are modeled, and the whole inventory is not randomly sampled. Only retrieved
-descriptions appear in `availability_options`. Non-offer retrieval
+returns up to three eligible similarity matches using a native result limit. Optional
+hourly price constraints apply to both the matching-record count and semantic query,
+before top-K ranking. No hard feature flags are modeled, and the whole inventory is not
+randomly sampled. Only retrieved descriptions/rates appear in `availability_options`. Non-offer retrieval
 uses `static_spaces` for directions/identity. Offered `space_id` values live in the
 thread's internal `offered_space_ids` list; suggestions never write or hold spaces.
 `offer_round_ids` accumulates every ID offered since the latest fresh request; an
@@ -82,6 +93,30 @@ thread's internal `offered_space_ids` list; suggestions never write or hold spac
 carries `previous_offers_excluded` (a count, not IDs).
 The server also prepares bounded baseline evidence before interaction, without adding
 the entire static inventory to prompts. No occupancy-feed/refresh-service platform is needed.
+
+## Optional hourly budget (implemented)
+
+`ReservationExtraction.budget_phrase` is a separate optional verbatim phrase in the
+existing structured extraction call, allowed on information and reservation turns.
+It never becomes a fifth required field or enters the private reservation/MCP schema.
+`pricing.py` independently parses one bounded English USD/hour upper limit or inclusive
+range, validates model grounding, and preserves strict versus inclusive upper limits.
+Recognizable unsupported, conflicting, total-stay, or unit-ambiguous price cues fail
+closed; structured output alone does not prove semantic correctness. Decimal amounts
+must represent whole cents, number words zero through twenty are supported, and user
+limits are not clamped to the inventory range. Amounts above $10,000,000/hour are
+rejected as unsupported rather than rounded. This is not universal language understanding.
+
+Thread `budget` stores only normalized cent bounds/inclusivity; `budget_pending` blocks
+new options and submission until clarification or `/clear-budget`. Preferences persist
+through `/options` and other-options turns; changes invalidate offers/round IDs but not
+confirmed personal details. `/new` and `/cancel` reset the preference. Pending submitted
+requests cannot be edited. Submission rereads the selected rate when a budget is active;
+static prices are reviewed mock data, not a concurrently managed billing system or a
+locked quote. The existing atomic SQLite availability/overlap check remains separate.
+Code appends every offered ID, description, and USD/hour rate to guarded information
+and collection replies. General model explanation/grounding remains prompt-guided;
+the authoritative option entries, not arbitrary model prose, enforce the selected list.
 
 ## Reservation details (collection implemented)
 

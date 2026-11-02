@@ -18,7 +18,7 @@ class StorageConfigTests(unittest.TestCase):
                 config = StorageConfig.from_environment()
                 self.assertEqual(config.chroma_directory, PROJECT_ROOT / ".data/chroma")
                 self.assertEqual(config.sqlite_path, PROJECT_ROOT / ".data/parking.sqlite3")
-                self.assertEqual(config.chroma_collection, "parking_spaces_v2")
+                self.assertEqual(config.chroma_collection, "parking_spaces_v3")
                 self.assertEqual(config.embedding_deployment, DIAL_TEXT_EMBEDDING_3_SMALL)
                 self.assertEqual(config.embedding_model, TEXT_EMBEDDING_3_SMALL)
 

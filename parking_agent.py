@@ -38,10 +38,12 @@ from context_augmentation import (
     augmented_messages,
     latest_user_index,
     offered_space_ids,
+    priced_options_reply,
     render_context,
     retrieve_context,
 )
 from guardrails import SAFE_REPLY, GuardrailError, PrivacyGuard, guarded_model_config
+from pricing import BUDGET_CLARIFICATION, BudgetError, HourlyBudget, budget_cue, clears_budget, resolve_budget
 from recording import ApprovedReservationWriter, RecordingConfig, RecordingError, RecordingResult
 from recording_client import MCPRecordingClient
 from reservation_collection import (
@@ -89,6 +91,8 @@ class ParkingState(ParkingMessages):
     review_retry: bool = False
     recording: dict = field(default_factory=dict)
     recording_requested: bool = False
+    budget: dict = field(default_factory=dict)
+    budget_pending: bool = False
 
 
 @dataclass(frozen=True)
@@ -328,12 +332,18 @@ class ParkingSpaceReservationAgent:
                 "reservation": session.model_dump(mode="json"),
                 "reservation_reply": EXTRACTION_FAILURE,
                 "retrieval_context": "",
+                "offered_space_ids": [],
+                "offer_round_ids": [],
+                "refresh_options": False,
+                "budget_pending": state.budget_pending or budget_cue(text),
             }
         session, reply = advance_collection(
             previous, text, proposal, self.config.context.location_id, self._clock(), state.messages
         )
         updates: dict = {
             "reservation": session.model_dump(mode="json"),
+            "budget": state.budget,
+            "budget_pending": state.budget_pending,
             "reservation_reply": reply,
             "retrieval_context": "",
             "refresh_options": False,
@@ -354,6 +364,40 @@ class ParkingSpaceReservationAgent:
             updates["offered_space_ids"] = []
             updates["offer_round_ids"] = []
             updates["offer_duration_hours"] = None
+        if text.strip().lower() in {"/cancel", "/new"}:
+            updates.update(budget={}, budget_pending=False)
+            return updates
+        if clears_budget(text):
+            updates.update(
+                budget={},
+                budget_pending=False,
+                offered_space_ids=[],
+                offer_round_ids=[],
+                offer_duration_hours=None,
+                reservation_reply="Hourly price filter cleared. Send /options for new suggestions.",
+            )
+            return updates
+        try:
+            budget = resolve_budget(text, proposal.budget_phrase)
+        except BudgetError:
+            updates.update(
+                budget_pending=True,
+                offered_space_ids=[],
+                offer_round_ids=[],
+                offer_duration_hours=None,
+                reservation_reply=BUDGET_CLARIFICATION,
+                refresh_options=False,
+            )
+            return updates
+        if budget is not None:
+            changed = state.budget != budget.model_dump(mode="json") or state.budget_pending
+            updates.update(budget=budget.model_dump(mode="json"), budget_pending=False)
+            if changed:
+                updates.update(offered_space_ids=[], offer_round_ids=[], offer_duration_hours=None)
+            if session.status != "awaiting_confirmation" or not reply:
+                updates["refresh_options"] = True
+        elif state.budget_pending:
+            updates.update(reservation_reply=BUDGET_CLARIFICATION, refresh_options=False)
         return updates
 
     @staticmethod
@@ -452,6 +496,17 @@ class ParkingSpaceReservationAgent:
                 "refresh_options": False,
                 "recording_requested": False,
             }
+        if clears_budget(command):
+            return self._collection_result(state, command, ReservationExtraction())
+        if state.budget_pending and (
+            command.lower() == "/options" or re.match(r"^/submit(?:\s|$)", command, re.IGNORECASE)
+        ):
+            return {
+                "reservation_reply": BUDGET_CLARIFICATION,
+                "retrieval_context": "",
+                "refresh_options": False,
+                "offered_space_ids": [],
+            }
         if command.lower() == "/options":
             return {
                 "reservation_reply": (
@@ -488,6 +543,18 @@ class ParkingSpaceReservationAgent:
             )
         try:
             ids = self.static_store.list_space_ids(session.request.location_id)
+            if state.budget:
+                selected_doc = self.static_store.get_spaces(
+                    [f"{session.request.location_id}:space:{selected[1]}"], location_id=session.request.location_id
+                )[0]
+                budget = HourlyBudget.model_validate(state.budget)
+                if not budget.accepts(selected_doc.metadata["hourly_price_cents"]):
+                    return {
+                        **base,
+                        "reservation_reply": "The selected space no longer meets your hourly price constraint. Send /options for new suggestions.",
+                        "offered_space_ids": [],
+                        "offer_round_ids": [],
+                    }
             row = self.reservation_store.hold(session.request, selected[1], self._thread_id(config), ids)
         except ReservationConflict as error:
             return {**base, "reservation_reply": str(error), "refresh_options": True, "offer_round_ids": []}
@@ -567,6 +634,8 @@ class ParkingSpaceReservationAgent:
     ) -> Literal["context_augmentation", "parking_assitant", "record_approved_reservation"]:
         if state.recording_requested:
             return "record_approved_reservation"
+        if state.budget_pending:
+            return "parking_assitant"
         if state.refresh_options:
             return "context_augmentation"
         if (
@@ -583,11 +652,7 @@ class ParkingSpaceReservationAgent:
         reply = state.reservation_reply
         options = offered_space_ids(state.retrieval_context)
         if options is not None:
-            reply += "\n\n" + (
-                "Current parking options: " + ", ".join(options) + ". These are suggestions, not holds or bookings."
-                if options
-                else "No eligible parking options can currently be offered."
-            )
+            reply += "\n\n" + priced_options_reply(state.retrieval_context)
         response = AIMessage(reply, id=str(uuid4()))
         updates: dict = {"messages": [response]}
         session = self._reservation_session(state)
@@ -630,6 +695,7 @@ class ParkingSpaceReservationAgent:
                 unavailable_space_ids=blocked,
                 reservation_period=period,
                 force_availability=state.refresh_options,
+                budget=HourlyBudget.model_validate(state.budget) if state.budget else None,
             )
         except GuardrailError:
             return self._guardrail_failure(state)
@@ -838,7 +904,15 @@ class ParkingSpaceReservationAgent:
         except APIError:
             # Avoid including raw provider errors in the graph's user-facing error.
             raise RuntimeError("Unable to get a response. Check the model configuration or retry the run.") from None
-        return {"messages": [self.privacy_guard.response(response, self._private_values(state))]}
+        response = self.privacy_guard.response(response, self._private_values(state))
+        return {"messages": [self._append_priced_evidence(state, response)]}
+
+    @staticmethod
+    def _append_priced_evidence(state: ParkingState, response: AIMessage) -> AIMessage:
+        suffix = priced_options_reply(state.retrieval_context)
+        if suffix and response.text != SAFE_REPLY:
+            response = AIMessage(response.text + "\n\n" + suffix, id=response.id or str(uuid4()))
+        return response
 
     async def _aparking_assitant(self, state: ParkingState, config: RunnableConfig) -> dict:
         if state.reservation_reply:
@@ -857,7 +931,7 @@ class ParkingSpaceReservationAgent:
         except APIError:
             raise RuntimeError("Unable to get a response. Check the model configuration or retry the run.") from None
         response = await asyncio.to_thread(self.privacy_guard.response, response, self._private_values(state))
-        return {"messages": [response]}
+        return {"messages": [self._append_priced_evidence(state, response)]}
 
     def _build_graph(self, checkpointer: BaseCheckpointSaver | None) -> CompiledStateGraph:
         builder = StateGraph(ParkingState, input_schema=ParkingMessages, output_schema=ParkingMessages)

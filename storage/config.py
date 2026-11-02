@@ -15,7 +15,7 @@ class StorageConfig:
     """Local persistent stores; relative paths are anchored to the project root."""
 
     chroma_directory: Path = PROJECT_ROOT / ".data" / "chroma"
-    chroma_collection: str = "parking_spaces_v2"
+    chroma_collection: str = "parking_spaces_v3"
     sqlite_path: Path = PROJECT_ROOT / ".data" / "parking.sqlite3"
     embedding_deployment: str = DIAL_TEXT_EMBEDDING_3_SMALL
     embedding_model: str = TEXT_EMBEDDING_3_SMALL
@@ -38,7 +38,7 @@ class StorageConfig:
     def from_environment(cls) -> "StorageConfig":
         return cls(
             chroma_directory=Path(os.getenv("PARKING_CHROMA_DIRECTORY") or ".data/chroma"),
-            chroma_collection=os.getenv("PARKING_CHROMA_COLLECTION") or "parking_spaces_v2",
+            chroma_collection=os.getenv("PARKING_CHROMA_COLLECTION") or "parking_spaces_v3",
             sqlite_path=Path(os.getenv("PARKING_SQLITE_PATH") or ".data/parking.sqlite3"),
             embedding_deployment=os.getenv("AZURE_OPENAI_EMBEDDING_DEPLOYMENT") or DIAL_TEXT_EMBEDDING_3_SMALL,
             embedding_model=os.getenv("AZURE_OPENAI_EMBEDDING_MODEL") or TEXT_EMBEDDING_3_SMALL,

@@ -130,6 +130,7 @@ class ImmediateReservationTests(unittest.TestCase):
                 label="Demo",
                 description="Beside the entrance.",
                 source="fixture",
+                hourly_price_cents=500,
             ).to_document()
             for x in self.ids
         ]

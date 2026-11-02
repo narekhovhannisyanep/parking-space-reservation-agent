@@ -21,7 +21,7 @@ reliability, evaluation, and testing remain part of the assignment.
 
 | Stage | Implemented | Still needed |
 | --- | --- | --- |
-| 1: RAG/chatbot | Startup-ready Chroma/SQLite stores, 20-record fixture, graph-wired retrieval, three semantic eligibility-filtered options with location-preference terms and "other options" follow-ups, draft collection/validation/user confirmation, layered local privacy guards, synthetic guardrail evaluation, synthetic RAG retrieval/answer/latency evaluation and report | Optional retrieval tuning (see RAG_EVALUATION.md limits) |
+| 1: RAG/chatbot | Startup-ready Chroma/SQLite stores, 20 detailed mock descriptions with USD/hour metadata, optional validated persistent budgets, three availability/price-filtered semantic options with deterministic priced entries, draft confirmation, privacy guards, and measured retrieval/answer evaluation | Optional semantic retrieval tuning (see RAG_EVALUATION.md limits) |
 | 2: Human approval | Second LangChain communication agent, explicit submission, SQLite period holds, typed Studio review, approval/refusal and user outcome replies; offline integration/race/replay/streaming tests; live extraction and sync/async administrator smoke checks; user-reported Studio demo | No remaining implementation for the selected Stage 2 scope; verification limits below |
 | 3: Approved recording | Narrow Python stdio MCP service, read-only approval checks, atomic per-request files, bounded/manual retries, safe outcome replies, private permissions and startup cleanup; real MCP and Agent Server integration tests | No remaining implementation for the selected Stage 3 scope; trusted-local limits below |
 | 4: Orchestration | Complete graph, 11 real HTTP/server/stdio scenarios, 90 local load conversations at concurrency 1/5/10, ten-way contention check, two real Azure/DIAL pipeline smoke conversations and measured validation report | No implementation remaining for the selected slice; repository publication/submission is a separate operator action; see report limits |
@@ -117,6 +117,7 @@ add a separate public API or UI. Startup waits for both databases and baseline e
 | `commons/constants.py` | Current model constants and user-facing system prompt |
 | `context_augmentation.py` | Public-information retrieval and model-only evidence augmentation |
 | `reservation_collection.py` | Draft extraction, validation, user confirmation, and cancellation |
+| `pricing.py` | Bounded verbatim hourly-budget validation, exact-cent comparisons and rate formatting |
 | `administrator_agent.py` | Second LangChain agent: bounded review wording and strict human-decision schema |
 | `storage/reservations.py` | Private SQLite hold ledger, atomic overlap checks, approval/refusal and timestamps |
 | `recording.py` | Read-only canonical approval checks, four-field formatting, safe atomic file publication and dedicated cleanup |
@@ -161,8 +162,10 @@ server-startup side effects.
 ## Persistent parking information
 
 The selected static/dynamic split is an optional assignment improvement we are
-keeping: local persistent Chroma for static information, built-in SQLite for hours,
-prices, and availability. Neither requires a separate database server.
+keeping: local persistent Chroma for descriptions and fixed mock hourly prices,
+built-in SQLite for hours, availability, and private reservation holds. Neither requires
+a separate database server. The user-approved pricing change replaces SQLite prices
+with Chroma numeric metadata, not a second price source.
 
 At each application-server startup:
 
@@ -201,8 +204,12 @@ The internal `search(..., eligible_ids=...)` constraint also limits ranking to t
 document IDs Python has deemed eligible; it never changes that mandatory scope.
 
 `storage/parking_spaces.json` contains 20 mock spaces for `demo-central`, differing
-by identity and public directions. Every space fits any vehicle by project assumption;
-no dimensions, vehicle categories, or facility-feature matching are modeled.
+by location, access routes, practical benefits/trade-offs, and fixed hourly price.
+Each has required `hourly_price_cents` from 100 to 2000 ($1–$20/hour, USD). Numeric
+prices are Chroma metadata, not embedded prose. Descriptions mention useful routes,
+shopping/unloading, pushchairs, weather exposure and passing traffic; these are fictional
+evidence, not certified accessible bays or hard feature guarantees. Every space fits
+any vehicle; no dimensions, vehicle categories, or feature flags are modeled.
 The fixture is not complete data for all required general parking/location questions.
 
 Validate the fixture offline:
@@ -230,15 +237,19 @@ are not deleted automatically. SQLite is untouched. The agreed demo uses the bun
 mock fixture without implementing static-data-change or approval logic. The explicit
 seed CLI remains an operator API; startup never updates a populated collection.
 
-**Expanding an existing eight-record demo:** stop the server, connect the VPN needed
-by the embedding provider, run `uv run --env-file .env python -m storage.seed` once,
-then restart. This preserves the original eight IDs and adds twelve records. Do not
-delete Chroma or change collection/schema for this expansion. Editing the fixture
-alone will not expand a populated collection. Unrelated IDs are preserved, so an
-operator-maintained collection need not contain exactly 20.
+**Migrating the earlier demo to priced inventory:** stop the server and change only
+`PARKING_CHROMA_COLLECTION` in your existing `.env` to `parking_spaces_v3` (the new
+default and `.env.example` value). Connect the required VPN, then run
+`uv run --env-file .env python -m storage.seed --dry-run` and
+`uv run --env-file .env python -m storage.seed`, then restart. Alternatively an empty
+v3 collection will seed at startup. The old Chroma collection/data is retained, and
+the original 20 space IDs are preserved in the new collection. Do not erase Chroma
+or upsert schema-3 records into an old-schema collection. Editing the fixture alone
+never changes a populated collection. Your real `.env` and `.data/` are not modified
+by the coding/evaluation work.
 
-**Existing database compatibility:** the current schema is version 2 and the default
-collection is `parking_spaces_v2`. If `.env` selects an older collection, select a
+**Existing database compatibility:** the current schema is version 3 and the default
+collection is `parking_spaces_v3`. If `.env` selects an older collection, select a
 fresh collection and re-seed. Do not upsert new-schema records over old-schema IDs:
 Chroma merges metadata and can retain removed fields. Old-schema records are excluded
 by search filters. Do not erase existing databases to migrate.
@@ -248,18 +259,20 @@ short fixture needs no chunking; automatic chunking is not implemented.
 ### Dynamic facts
 
 `DynamicParkingStore` exposes `upsert_fact`, `get_fact`, `list_facts`, and `delete_fact`.
-Allowed kinds are `working_hours`, `prices`, and `availability`, keyed by location
+Operational kinds are `working_hours` and `availability`, keyed by location
 and kind with JSON values and UTC write timestamps. Writes are transactional and
 parameter-bound; connections are closed per operation.
 
 Dynamic data starts empty at each server startup. Missing facts return `None` or an
-empty list; hours and prices remain unknown until supplied through Python CRUD.
+empty list; hours remain unknown until supplied through Python CRUD. Prices come
+only from scoped Chroma inventory metadata; a missing inventory has unknown rates.
 For availability suggestions, the static inventory is available by default unless a
 successfully read dynamic snapshot blocks it. The current lightweight availability
 snapshot supports a location-wide boolean or a map of space IDs to booleans:
 `False` blocks a space; omitted IDs use the static default. Null, aggregate counts,
 strings, and unsupported shapes cannot be used to select options and raise an error.
-Hours/prices retain their existing JSON-compatible payloads.
+Hours retain their existing JSON-compatible payloads. Legacy `prices` CRUD is kept
+for API compatibility but ignored by RAG/filtering/display; do not populate it.
 These snapshots are public observations, not the private reservation ledger. A write
 timestamp does not prove freshness. The Stage 2 ledger separately blocks overlapping
 pending/approved periods and is never included in public evidence.
@@ -274,7 +287,8 @@ taken from the public inventory descriptions, so stated preferences affect ranki
 Request wording includes spaces/spots/places/slots, park (verb), free (except "free of
 charge"), vacant, reserve/book, and options; "Tell me about parking" is information only. Unknown topics use `parking information` and reuse the bounded
 startup static evidence. Location/directions topics still use semantic retrieval.
-Hours/prices-only turns include only the requested operational facts, not space
+Hours/prices-only turns include requested hours and/or an aggregate Chroma hourly
+price range read from scoped metadata, not space
 inventory or unrelated availability snapshots. Dynamic facts
 are reread on information turns, not taken from a permanently cached startup snapshot.
 
@@ -314,7 +328,7 @@ submission computes and atomically rechecks its own actual period.
 
 JSON evidence is appended only to a copy of the latest user message for the model.
 Dynamic snapshots have evidence-budget priority and are the instructed source for
-operational facts. Missing/null/omitted hours/prices mean unknown; availability uses
+hours/availability. Missing/null/omitted hours mean unknown; availability uses
 the explicit code-controlled default/override rule above. Top-K retrieval is not
 exhaustive inventory or allocation. Async storage runs off the event loop.
 
@@ -329,7 +343,7 @@ checks are implemented below, with documented detection limits.
 | Environment setting | Default |
 | --- | --- |
 | `PARKING_CHROMA_DIRECTORY` | `.data/chroma` |
-| `PARKING_CHROMA_COLLECTION` | `parking_spaces_v2` |
+| `PARKING_CHROMA_COLLECTION` | `parking_spaces_v3` |
 | `PARKING_SQLITE_PATH` | `.data/parking.sqlite3` |
 | `PARKING_LOCATION_ID` | `demo-central` |
 | `AZURE_OPENAI_EMBEDDING_DEPLOYMENT` | Existing `DIAL_TEXT_EMBEDDING_3_SMALL` constant |
@@ -343,6 +357,47 @@ out of the real project data. There is no chat-selected output path or additiona
 recording-path environment variable. Do not put backups or other valuable files there.
 Embedding clients initialize only when embedding is needed; empty searches do not
 require them. Chroma telemetry is disabled.
+
+### Optional hourly price constraints
+
+Give an explicit USD/hour upper limit or range, for example:
+
+- “Any available spaces under $8/hour?” — strictly below $8.
+- “Up to $8 per hour.” — $8 is included.
+- “Between $5 and $10/hour.” — both ends included.
+- “Budget: eight dollars an hour.” — up to $8/hour.
+
+The existing structured extraction call proposes a complete verbatim `budget_phrase`;
+Python independently validates recognizable price cues, currency, hourly units,
+comparison and numeric bounds. An omitted model phrase cannot ignore supported
+explicit wording. Ambiguous/fuzzy/total-stay/unsupported/conflicting budgets prompt
+for clarification rather than generating unrestricted options. This is a bounded
+English grammar, not universal extraction accuracy. Decimal amounts must be whole
+cents; number words zero through twenty are supported. User budgets are not clamped
+to the $1–$20 fixture range; a $0.50/hour cap returns no matches. Very large amounts
+above $10,000,000/hour are unsupported.
+
+Budget is optional and thread-scoped, separate from personal details/confirmation.
+It persists through `/options` and “other options”; changes invalidate previous offers
+and start a new offer round without changing confirmed personal details. `/clear-budget`
+(or “clear my budget”) removes it; `/new` and `/cancel` also reset it. A price preference
+awaiting clarification blocks new offers and submission until resolved/cleared.
+
+Python combines current availability/hold eligibility with numeric Chroma price
+filters **before** semantic top-3 ranking and the result-count check. It never samples
+or pads the list with over-budget spaces. Every code-selected option is displayed
+with its ID, description and `$X.XX/hour (USD)`, including collection/control replies.
+Application code appends these entries to guarded model explanations; general model
+prose remains prompt-grounded, not a second authority for options or prices.
+Submission rereads the selected rate under an active budget and retains the existing
+atomic SQLite overlap/public-availability recheck. Static prices are fixed reviewed
+mock data, not locked quotes or a concurrent billing system. No total estimate,
+payment processing, rate generator, new mandatory reservation field or MCP column is added.
+
+Queries also map mobility/step-free access, shopping bags/unloading, pushchairs,
+covered routes/rain, passing traffic and quick departures to fixed public terms.
+“Avoid stairs” maps to step-free access rather than a positive stairs query. Richer
+descriptions do not guarantee semantic matches; measured limits are in RAG_EVALUATION.md.
 
 ## Reservation draft collection
 
@@ -388,6 +443,7 @@ summary without creating a hold or implicitly confirming/submitting anything.
 | `/clear FIELD` | Remove `first_name`, `surname`, `car_number`, or `duration_hours` |
 | `/cancel` | Clear the draft/confirmation, not chat history |
 | `/new` | Start a new empty draft |
+| `/clear-budget` | Clear the optional price preference and invalidate old offers; not the personal draft |
 | `/options` | Show up to three semantic suggestions for a now-based duration preview; overlapping holds are excluded |
 | `/submit SPACE_ID` | Submit one currently offered space for the confirmed duration, starting its pending hold now before administrator review |
 | `/retry-recording` | Retry file recording for the current human-approved failed/unconfirmed request, before `/new`; does not repeat approval or shift the period |
@@ -713,10 +769,17 @@ Tests use the standard-library `unittest` framework (the assignment accepts pyte
 unittest), so pytest is not a project dependency. If you install pytest yourself, it
 can also discover and run these `unittest` test cases.
 
-The final Stage 4 offline run completed **339 tests: 335 passed, four opt-in live
-component checks skipped**. The separate two real-provider full-pipeline smoke checks
-also passed. Ruff lint/format and ty checks passed; see STAGE4_VALIDATION.md for dates,
-measured load results and limitations.
+The earlier Stage 4 offline run completed 339 tests (335 passed, four live checks
+skipped); its separate two real-provider full-pipeline smoke checks also passed.
+The **2026-11-02 priced-inventory regression completed 359 tests: 354 passed, five
+opt-in live checks skipped**, including the budget-filtered real HTTP/stdio workflow.
+The five opt-in live component checks were run separately and passed, including
+grounded budget extraction. All 12 deterministic budget evaluation cases passed;
+two live answer runs passed 12/13 cases. Retrieval results are mixed, with the
+remaining exact-ID and challenge-paraphrase limits documented in RAG_EVALUATION.md.
+Ruff lint/format and ty checks passed. No new package or provider change was made;
+the baseline requirements, real `.env`, and populated project stores were unchanged.
+See STAGE4_VALIDATION.md for the historical load evidence and its limitations.
 
 Run the synthetic privacy evaluation with `.venv/bin/python -m guardrail_evaluation`.
 It prints case IDs/counts, coverage metrics, and warm detector latency; no files are
@@ -747,8 +810,8 @@ Source checks:
 
 ```bash
 uv tool run ty check
-uv tool run ruff check app.py parking_agent.py administrator_agent.py recording.py recording_client.py recording_server.py system_validation.py guardrails.py guardrail_evaluation.py rag_evaluation.py reservation_collection.py context_augmentation.py commons storage tests
-uv tool run ruff format --check app.py parking_agent.py administrator_agent.py recording.py recording_client.py recording_server.py system_validation.py guardrails.py guardrail_evaluation.py rag_evaluation.py reservation_collection.py context_augmentation.py commons storage tests
+uv tool run ruff check app.py parking_agent.py pricing.py administrator_agent.py recording.py recording_client.py recording_server.py system_validation.py guardrails.py guardrail_evaluation.py rag_evaluation.py reservation_collection.py context_augmentation.py commons storage tests
+uv tool run ruff format --check app.py parking_agent.py pricing.py administrator_agent.py recording.py recording_client.py recording_server.py system_validation.py guardrails.py guardrail_evaluation.py rag_evaluation.py reservation_collection.py context_augmentation.py commons storage tests
 ```
 
 ## Stage 4 validation

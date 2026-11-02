@@ -24,7 +24,9 @@ no files.
 
 | Part | What it measures | Models |
 | --- | --- | --- |
-| Retrieval | Recall@3, capped Recall@3, Precision@3, Hit@3 and MRR over 20 hand-labeled preference queries | Real embeddings; stub chat/extraction |
+| Retrieval | Recall@3, capped Recall@3, Precision@3, Hit@3 and MRR over the original 20 hand-labeled queries | Real embeddings; stub chat/extraction |
+| Practical benefits | 8 additional hand-labeled route/usefulness requests, including 2 challenge paraphrases | Same run; reported separately |
+| Budgets | 12 explicit upper-limit/range/clarification cases: compliance, count, price display, blocked inventory | Same run; Python parses cues independently of stub extraction |
 | Request detection | Whether 14 messages correctly do, or do not, produce availability options | Same run |
 | Follow-ups | Whether 3 "other options" conversations offer new, nonoverlapping spaces | Same run |
 | Answers | 13 conversations checked with deterministic rules | Real embeddings, chat and extraction |
@@ -39,8 +41,8 @@ no files.
   at most 0.333.
 - **Answer rules.** Answers are checked by rules rather than an LLM grader, so the
   results are reproducible, explainable and add no cost:
-  - stored hours/prices are quoted;
-  - missing facts are stated as unknown;
+  - SQLite hours and Chroma hourly-rate metadata summaries are quoted;
+  - missing hours are stated as unknown;
   - offered IDs are mentioned;
   - no unoffered inventory IDs or labels appear;
   - no reservation, booking or approval is claimed;
@@ -48,14 +50,116 @@ no files.
   - follow-up options don't overlap earlier ones.
 
   Rules can misjudge paraphrases, so failures were inspected by hand (see below).
-- **Facts.** Facts are written through the existing Python CRUD into the temporary
-  SQLite store for each case and removed afterwards, matching the empty-at-startup
-  design.
+- **Facts.** Hours/availability are written through Python CRUD into temporary SQLite
+  and removed afterwards. Hourly prices come only from Chroma metadata. One case
+  injects contradictory legacy SQLite prices and verifies they are ignored. The
+  earlier missing-price case is now this legacy-precedence case because prices are
+  required in the fixture; empty-inventory price handling has separate unit coverage.
 - **Latency.** Latency includes the provider network round trip, which this evaluation
   does not control. Retrieval-only turns use stub models, so `parking_assitant` and
   `reservation_collection` reflect local overhead only.
 
-## Results (2026-10-30, `gpt-6.1-sol-2026-09-29`, `text-embedding-3-small-1`)
+## Current priced-inventory results (2026-11-02)
+
+The fixture now contains 20 realistic, differentiated location/route descriptions,
+practical benefits and trade-offs, preserving every space ID/location. Required fixed
+USD rates are numeric Chroma metadata only (`hourly_price_cents=100..2000`, schema 3),
+not embedded prices. Queries still embed code-owned public terms, now also covering
+mobility, shopping bags, pushchairs, weather, traffic and departures. Negative stairs
+requests map to step-free access. No new package, provider, real `.env` edit or populated
+project-data reseeding/deletion was needed. All evaluation stores were temporary.
+
+The live run used `text-embedding-3-small-1` and `gpt-6-luna-2026-09-22`, tracing off,
+with `function_calling`. Two answer runs both passed 12/13 cases. The following is
+one retrieval measurement, not a statistically powered comparison:
+
+| Original 20-query set, K=3 | Earlier short fixture (2026-10-30) | Detailed priced fixture |
+| --- | --- | --- |
+| Recall@3 | 0.535 | 0.547 |
+| Capped Recall@3 | 0.608 | 0.625 |
+| Precision@3 | 0.483 | 0.500 |
+| Hit@3 | 0.800 | 0.750 |
+| MRR | 0.692 | 0.567 |
+| Request detection (14) | 14/14 | 14/14 |
+| Disjoint other-options conversations (3) | 3/3 | 3/3 |
+
+**Results are mixed, not a uniform retrieval improvement.** Recall/precision increased
+slightly; hit rate and first-relevant ranking decreased. Longer realistic descriptions
+provide more answerable context, but mentions of route limitations can compete with
+positive benefits in embeddings. The old labels/query set are retained for visibility;
+the richer corpus expands some meanings, so the historical comparison is imperfect.
+We did not rewrite the fixture/query vocabulary to erase challenge failures.
+
+### Practical benefits: 8 separate queries
+
+Aggregate capped Recall@3 / Precision@3: **0.583**; MRR: **0.604**.
+
+| Case | Offered IDs | Capped recall |
+| --- | --- | --- |
+| Wheelchair route | G-E02, G-E03, L1-B02 | 0.667 |
+| Avoid stairs | G-E02, G-E03, L1-E01 | 1.000 |
+| Shopping bags | OUT-V01, G-A02, OUT-P01 | 0.667 |
+| Stroller | OUT-P01, G-A02, L1-E01 | 1.000 |
+| Sheltered walk in rain | OUT-C01, OUT-P01, G-A02 | 0.333 |
+| Away from traffic | OUT-C01, OUT-C02, G-N01 | 1.000 |
+| “Trouble walking” challenge | OUT-V01, G-A01, G-A04 | 0.000 |
+| “Won't get soaked” challenge | G-A04, OUT-V01, OUT-V02 | 0.000 |
+
+The two challenge paraphrases were frozen before measurement and were not added to
+the mapper after failing. They are a tiny out-of-vocabulary probe, not an independent
+statistical hold-out benchmark. Rain/unloading negatives can rank highly because they
+mention the same concepts as positive requests. Descriptions remain semantic preferences,
+not hard accessibility/weather constraints or a certification of route suitability.
+
+### Budget compliance and live extraction
+
+All **12/12 budget cases passed**: strict/inclusive $8 bounds, inclusive $5–$10 range,
+$8.50 and word-valued limits, a $0.50 cap with no matches, all-blocked inventory, and
+clarification for total-stay, omitted-unit, non-USD, reversed-range and fuzzy budgets.
+Each case checks allowable IDs, expected up-to-three result count, per-option USD/hour
+display and clarification state; empty results are checked separately, not counted as
+evidence of successful nonempty retrieval. Budget filters and eligible IDs apply before
+Chroma ranking and its matching-record count. Rates never come from SQLite snapshots.
+
+Retrieval evaluation uses stub extraction, so this proves deterministic price enforcement
+for the tested grammar, **not real-model extraction accuracy**. A separate opt-in live
+component test verified that the model returned complete grounded budget phrases for
+strict/inclusive upper limits and a range; Python independently interpreted them. All
+five live component checks passed (existing extraction/collection/administrator checks
+plus budget extraction). This is smoke coverage, not universal free-form understanding.
+
+### Live answers and latency
+
+Both runs: **12/13 conversations fully passed**. All four offer-list checks mentioned
+every offered option; all five unoffered-ID checks passed; all twelve no-booking-claim
+checks passed. Hours/prices and legacy-price precedence passed. The remaining failure
+is the known exact-ID question “Where is space E02?”: fixed topic queries do not perform
+an exact-ID lookup. No exact-ID feature was added to make this test pass.
+
+Application code now appends every validated offered ID/description/rate to guarded
+model replies as well as collection/control replies. That completeness improvement is
+**code enforcement, not evidence that the answer model learned to list all options**.
+General model prose remains prompt-grounded; this is not complete output-grounding or
+prompt-injection protection.
+
+Latest of the two measured answer runs (14 turns): extraction median 1.788 s / p95
+2.969 s; context median 0.714 s / p95 1.697 s; response median 2.536 s / p95 11.944 s;
+whole turn median 5.574 s / p95 14.420 s. Retrieval-only context (56 nodes) median
+0.616 s / p95 1.500 s. Provider latency varies and the shared-host/sample size is small;
+these are not load-capacity measurements.
+
+Offline tests additionally cover budget persistence/clearing, confirmation independence,
+unsupported/missed/forged extraction, boundary comparisons, availability intersection,
+submission rate rechecks, async/thread isolation, and same-ID cross-schema upsert refusal.
+A real localhost HTTP Agent Server test carries a budget-filtered option through typed
+approval and actual stdio MCP recording with exact output checks. Existing Stage 4
+load evidence remains historical and is not claimed to be a new priced-workflow load run.
+The final offline regression completed **359 tests: 354 passed, five opt-in live
+component checks skipped**. Ruff lint/format and ty checks passed. Long non-cent
+decimal amounts are rejected by inspecting their original digits, not rounded with
+a floating-point or decimal precision context.
+
+## Historical results (2026-10-30, `gpt-6.1-sol-2026-09-29`, `text-embedding-3-small-1`)
 
 ### Retrieval, before and after the query-vocabulary change
 

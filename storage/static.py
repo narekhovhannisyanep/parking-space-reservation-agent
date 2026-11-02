@@ -123,6 +123,22 @@ class StaticParkingStore:
             ParkingSpace.validate_document(document)
         return [documents[identifier] for identifier in ids]
 
+    def hourly_price_summary(self, location_id: str) -> dict:
+        """Aggregate scoped numeric metadata only, never embed or expose all inventory prose."""
+        result = self._get_store().get(where=SpaceFilters().where(location_id), include=["metadatas"])
+        rates = []
+        for identifier, metadata in zip(result["ids"], result["metadatas"], strict=True):
+            ParkingSpace.validate_document(
+                Document(id=identifier, page_content="Public rate metadata.", metadata=metadata)
+            )
+            self.privacy_guard.check_public(metadata)
+            rates.append(metadata["hourly_price_cents"])
+        return (
+            {"status": "inventory", "currency": "USD", "minimum_cents": min(rates), "maximum_cents": max(rates)}
+            if rates
+            else {"status": "missing", "currency": "USD"}
+        )
+
     @staticmethod
     def validate_documents(documents: list[Document]) -> list[str]:
         """Validate a complete batch without creating resources or calling embeddings."""
@@ -142,7 +158,16 @@ class StaticParkingStore:
             self.privacy_guard.check_document(document)
         if not documents:
             return []
-        return self._get_store().add_documents(documents, ids=ids)
+        store = self._get_store()
+        existing = store.get(ids=ids, include=["metadatas"])
+        if any(
+            metadata.get("schema_version") != documents[0].metadata["schema_version"]
+            for metadata in existing["metadatas"]
+        ):
+            raise ValueError(
+                "Choose a fresh Chroma collection for a schema migration. Existing records were not changed."
+            )
+        return store.add_documents(documents, ids=ids)
 
     def search(
         self,

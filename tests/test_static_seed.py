@@ -43,7 +43,7 @@ class StaticSeedTests(unittest.TestCase):
             self.assertNotIn("fictional", doc.page_content.lower())
             self.assertTrue(doc.page_content.strip())
             self.assertLess(len(doc.page_content), 500)
-            self.assertEqual(doc.metadata["source"], "mock-space-inventory-v2")
+            self.assertEqual(doc.metadata["source"], "mock-space-inventory-v3")
             self.assertEqual(doc.metadata["record_type"], "parking_space")
             ParkingSpace.validate_document(doc)
             for forbidden in ("topic", "status", "available", "hold_id", "car_number", "request_id", "price"):
@@ -54,7 +54,9 @@ class StaticSeedTests(unittest.TestCase):
         self.assertEqual([space.to_document() for space in spaces], load_documents())
         for space in spaces:
             self.assertIn("Accepts any vehicle", space.to_document().page_content)
-            self.assertEqual(set(vars(space)), {"space_id", "location_id", "label", "description", "source"})
+            self.assertEqual(
+                set(vars(space)), {"space_id", "location_id", "label", "description", "source", "hourly_price_cents"}
+            )
 
     def test_seeded_inventory_filters_real_chroma_without_provider_calls(self):
         store = StaticParkingStore(StorageConfig(chroma_directory=self.root / "chroma"), embeddings=KeywordEmbeddings())

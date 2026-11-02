@@ -6,7 +6,9 @@ from typing import Any
 
 from langchain_core.documents import Document
 
-SPACE_SCHEMA_VERSION = 2
+from pricing import HourlyBudget, validate_rate
+
+SPACE_SCHEMA_VERSION = 3
 
 
 def _text(name: str, value: str, *, identifier: bool = False, limit: int = 200) -> None:
@@ -28,6 +30,7 @@ class ParkingSpace:
     label: str
     description: str
     source: str
+    hourly_price_cents: int
 
     def __post_init__(self) -> None:
         for name in ("space_id", "location_id"):
@@ -35,6 +38,7 @@ class ParkingSpace:
         for name in ("label", "source"):
             _text(name, getattr(self, name))
         _text("description", self.description, limit=400)
+        validate_rate(self.hourly_price_cents)
 
     @property
     def document_id(self) -> str:
@@ -78,10 +82,15 @@ class SpaceFilters:
     """Optional exact space lookup within mandatory location/schema scope."""
 
     space_id: str | None = None
+    budget: HourlyBudget | None = None
 
     def __post_init__(self) -> None:
         if self.space_id is not None:
             _text("space_id", self.space_id, identifier=True)
+        if self.budget is not None:
+            if not isinstance(self.budget, HourlyBudget):
+                raise TypeError("budget must be a validated HourlyBudget.")
+            HourlyBudget.model_validate(self.budget)
 
     def where(self, location_id: str) -> dict[str, Any]:
         """Always constrain the location and inventory schema, including on empty filters."""
@@ -93,4 +102,6 @@ class SpaceFilters:
         ]
         if self.space_id is not None:
             clauses.append({"space_id": self.space_id})
+        if self.budget is not None:
+            clauses.extend(self.budget.clauses())
         return {"$and": clauses}

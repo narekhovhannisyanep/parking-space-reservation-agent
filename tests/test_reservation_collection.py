@@ -251,6 +251,7 @@ class GraphCollectionTests(unittest.IsolatedAsyncioTestCase):
         self.static.search.return_value = []
         self.static.list_space_ids.return_value = []
         self.static.get_spaces.return_value = []
+        self.static.hourly_price_summary.return_value = {"status": "missing", "currency": "USD"}
         self.dynamic = Mock(spec=DynamicParkingStore)
         self.dynamic.list_facts.return_value = []
         ledger = Mock(spec=ReservationStore)

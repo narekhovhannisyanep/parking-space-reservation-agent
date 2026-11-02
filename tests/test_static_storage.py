@@ -37,6 +37,7 @@ def document(identifier="entrance", text="Space beside the entrance.", location=
         "label": identifier,
         "description": text,
         "source": "reviewed-space-inventory",
+        "hourly_price_cents": 500,
     }
     return ParkingSpace.from_record({**record, **changes}).to_document()
 
@@ -103,6 +104,22 @@ class StaticStorageTests(unittest.TestCase):
             text=True,
         )
         self.assertEqual(json.loads(result.stdout), [document().page_content])
+
+    def test_schema_migration_cannot_overwrite_existing_same_id(self):
+        legacy = document()
+        identifier = legacy.id
+        assert identifier is not None
+        legacy.metadata["schema_version"] = 2
+        del legacy.metadata["hourly_price_cents"]
+        self.store._get_store().add_documents([legacy])
+        with (
+            patch.object(self.store._embeddings, "embed_documents", side_effect=AssertionError("must not reembed")),
+            self.assertRaisesRegex(ValueError, "fresh Chroma collection"),
+        ):
+            self.store.upsert_documents([document()])
+        self.assertEqual(
+            self.store._get_store().get(ids=[identifier], include=["metadatas"])["metadatas"], [legacy.metadata]
+        )
 
     def test_distinct_collections_are_isolated(self):
         self.store.upsert_documents([document()])

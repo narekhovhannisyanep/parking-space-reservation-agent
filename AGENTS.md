@@ -63,9 +63,35 @@ as code are extra-credit artifacts; see the baseline for details.
   details and coordinate communication; only the human administrator approves.
   The recording service owns the file format, not the user-facing system prompt.
   Explicit `/submit SPACE_ID` is code-controlled; agents do not decide allocation.
-- **Static/dynamic split:** retain the selected optional assignment improvement:
-  local persistent Chroma for static information and built-in SQLite for dynamic
-  hours, prices, and availability. No standalone database server is needed.
+- **Static/dynamic split:** retain local persistent Chroma for static descriptions
+  and the user-approved fixed mock hourly USD prices; built-in SQLite supplies hours,
+  availability, and private reservation state. This supersedes the earlier SQLite-price
+  choice. No standalone database server is needed.
+- **Detailed mock inventory and budgets (user-approved addition):** keep the 20 space
+  IDs/locations and realistic, differentiated route/benefit/trade-off descriptions.
+  Accessibility/store examples are illustrative, not a mandatory feature checklist.
+  Required integer `hourly_price_cents` is 100–2000 (USD/hour), stored with each
+  description in the fixture but only as numeric Chroma metadata, not embedded text.
+  No startup random pricing or duplicate authoritative SQLite prices. Legacy `prices`
+  CRUD remains accepted for compatibility but is excluded from evidence/filtering/display.
+  The existing structured extraction call proposes an optional complete verbatim
+  budget phrase; Python independently parses supported explicit English USD/hour
+  upper limits/ranges and validates grounding, units, currency and exact cent bounds.
+  Under/below is strict, up-to/max inclusive, ranges inclusive. Unsupported/ambiguous/
+  conflicting/total-stay price cues prompt clarification, not unrestricted suggestions.
+  This bounded grammar is not universal semantic extraction accuracy. Budget is optional
+  thread search state, not a fifth required reservation field. It persists through
+  `/options`/other-options; changes clear offers/round IDs but not personal confirmation;
+  `/clear-budget`, `/new`, `/cancel` clear it. Clarification pending blocks new offers/
+  submission. Combine budget with available IDs in Chroma filters before native top-3
+  ranking/result count, never pad with over-budget results. Code appends all selected
+  IDs, descriptions and USD/hour rates to guarded replies. General LLM prose remains
+  prompt-grounded, not an additional price/option authority. Recheck the selected rate
+  before budgeted submission; no locked quote, billing, total estimate, payment integration
+  or MCP/ledger price columns. Descriptive preferences are semantic signals, not hard
+  feature constraints or accessibility certification. Use schema 3/new collection
+  `parking_spaces_v3`; preserve older collections and refuse same-ID cross-schema upserts.
+  Do not modify real `.env` or reindex/delete populated project data automatically.
 - **Minimal space inventory:** individually identified spaces; every space fits any
   vehicle by project assumption. No vehicle categories, dimensions, or facility-feature
   modeling. `car_number` is a user-provided vehicle identifier, including for vehicles
@@ -173,10 +199,11 @@ as code are extra-credit artifacts; see the baseline for details.
   checkpoints and debug/state APIs remain trusted local development surfaces, not a
   multi-user authorization boundary. Do not claim complete confidentiality.
 - **Learning-project focus:** this is a RAG/LangGraph learning project, not a parking
-  business. Do not add facility address, cost/pricing models, or booking-process
-  content. Space descriptions are the public location evidence; hours/prices remain
-  unknown unless supplied through Python CRUD. Requests are free: the user picks one
-  of the three offered options, and the administrator approves or refuses it.
+  business. The user-approved mock hourly prices/descriptive benefits above supersede
+  the earlier free-request/directions-only choice. Do not add facility addresses,
+  payment/cost accounting or booking-process content. Missing hours remain unknown
+  until Python CRUD supplies them. The user picks one of up to three offered options,
+  and the administrator approves or refuses it.
 - **Sequential reservations:** multiple spaces in one conversation are separate
   sequential one-space requests, not one multi-space request, using `/new` after review.
 - **Stage 4 evidence:** the user selected deterministic local full-workflow load plus
@@ -209,7 +236,7 @@ as code are extra-credit artifacts; see the baseline for details.
   server startup; populated collections are reused unchanged. SQLite is reset empty
   once per server lifespan. Chat does not seed/reset either database. Default paths
   are project-root `.data/`; SQLite cannot reside inside the persistent Chroma directory.
-- Static inventory currently uses schema version 2 and collection `parking_spaces_v2`.
+- Static inventory currently uses schema version 3 and collection `parking_spaces_v3`.
   Exact space filters retain location/type/schema scope. See README for migration and
   PARKING_DATA_MODEL.md for implemented fields; do not erase existing static databases
   to migrate.
@@ -217,6 +244,9 @@ as code are extra-credit artifacts; see the baseline for details.
   The code-owned vocabulary includes location terms taken from fixture descriptions
   (stairs, outdoor area, levels, compass directions, wall, fence, lobby, walkway, corner)
   and request words (spot/place/park/vacant/options; "free of charge" is not a request).
+  Benefit vocabulary covers step-free access/mobility, shopping bags, pushchairs,
+  weather/sheltered routes, passing traffic and departures; negated stairs map to
+  step-free terms. Exact budget constraints use Chroma numeric metadata, not embeddings.
   Retrieval reads location-scoped dynamic facts, and augments only a copy of the latest user
   message. Hours/prices-only turns omit space inventory; generic turns reuse bounded
   startup static evidence. Availability/request turns semantically retrieve up to three
@@ -229,7 +259,9 @@ as code are extra-credit artifacts; see the baseline for details.
   spaces. "Other/different/more options" follow-ups exclude every ID offered in the
   current round (`offer_round_ids`, code-tracked, never model text) before ranking; a
   fresh request, `/cancel`, or `/new` starts a new round. Blocked spaces are filtered
-  before ranking, so fewer than three options appear only when fewer eligible remain. Hours/prices remain unknown when missing. These snapshots do not allocate
+  before ranking, so fewer than three options appear only when fewer eligible remain.
+  Hours remain unknown when missing; prices come solely from Chroma metadata.
+  Price-only turns read a scoped metadata range, not all inventory prose. These snapshots do not allocate
   or guarantee availability for a booking period. Stage 2 separately reads blocked IDs
   from the private ledger before ranking for a now-based preview of the validated
   duration; unknown durations use current observations and exclude only active-now holds.
@@ -300,19 +332,25 @@ as code are extra-credit artifacts; see the baseline for details.
   traces, raw chats, and checkpoints remain trusted private development data. Unknown/
   obfuscated identifiers and unfamiliar PII can be missed. Information grounding and
   prompt-injection defense remain prompt-guided; do not claim complete confidentiality.
-- The 20-record fixture preserves the original eight IDs. Populated Chroma collections
-  remain unchanged at startup; README documents a one-time explicit seed upsert. Do not
+- The detailed priced 20-record fixture preserves all original IDs/locations. Populated
+  Chroma collections remain unchanged at startup; README documents a new schema-3
+  collection migration and same-ID old-schema upserts are refused. Do not
   erase static data or silently apply fixture changes.
 - GUARDRAIL_EVALUATION.md and guardrail_evaluation.py provide synthetic local privacy
   evaluation. Boundary tests cover contamination, detector failure, old drafts and
   actual guarded streaming.
 - RAG_EVALUATION.md and rag_evaluation.py provide the Stage 1 evaluation report:
-  20 labeled retrieval queries (Recall@3/capped recall/Precision@3/Hit@3/MRR, measured
-  before and after the vocabulary change with real embeddings), request detection,
-  follow-up disjointness, 13 rule-checked live answer conversations, and per-node
-  latency. Answers use rules, not an LLM grader. Remaining weak spots (lift/elevator
-  synonyms, one-word topics, exact-ID lookup, not all offered options mentioned by
-  the model) are documented, not tuned, to avoid overfitting the small labeled set.
+  original 20 labeled retrieval queries, 8 practical-benefit queries with 2 frozen
+  out-of-vocabulary challenge paraphrases, 12 deterministic budget-compliance cases,
+  request detection/follow-up disjointness, 13 rule-checked live answer conversations
+  and latency. The 2026-11-02 real-embedding run showed mixed original-set changes:
+  Recall@3 0.547, capped recall 0.625, Precision@3 0.500, Hit@3 0.750, MRR 0.567.
+  Benefit capped recall/precision 0.583 and MRR 0.604; both challenge paraphrases missed.
+  All 12 budget cases passed. Two live answer runs passed 12/13, with exact-ID lookup
+  still failing; all offered options/prices now have code-generated entries.
+  Five opt-in live component checks passed, including grounded upper-limit/range
+  extraction. These are smoke/synthetic results, not universal language accuracy,
+  hard feature matching, new browser validation or new live-provider load evidence.
 - Offline tests cover storage, graph integration, draft collection, retrieval topics
   and evaluation harness. `system_validation.py` supplies explicit, bounded Stage 4
   scenarios/load/live checks through real localhost TCP Agent Server and actual stdio.
@@ -347,10 +385,13 @@ as code are extra-credit artifacts; see the baseline for details.
   UTC (2026-11-01 local). See STAGE4_VALIDATION.md for methods/timings and limits:
   injected load models, scripted review, small samples/shared host, no live-provider
   load or new browser test, no complete privacy/security/resource-leak certification.
-  The final offline regression run completed 339 tests (335 passed, four opt-in live
-  component checks skipped); the two full-pipeline live checks remain separate evidence.
-  Ruff lint/format and ty checks passed. No dependency, provider, fixture or baseline
-  requirement change was made.
+  The earlier Stage 4 offline regression completed 339 tests (335 passed, four live
+  checks skipped); the two full-pipeline live checks remain separate evidence.
+  The 2026-11-02 priced-inventory regression completed 359 tests (354 passed, five
+  opt-in live component checks skipped), including a budget-filtered real HTTP/stdio
+  approval/recording check. Ruff lint/format and ty checks passed. The fixture/pricing
+  changes are the user-approved addition above; no dependency/provider or baseline
+  requirement change, real `.env` edit, or populated project-data reset was made.
 
 ## Next-session handoff
 
@@ -363,8 +404,13 @@ as code are extra-credit artifacts; see the baseline for details.
   alongside SQLite on next startup; old checkpoints cannot resurrect rows/files.
   Recording choices remain settled. README documents setup, logic, Studio use,
   trusted-local deployment and repository links; STAGE4_VALIDATION.md documents the
-  completed integration/local-load/live-smoke slice. No provider/static-data change was
-  needed; do not erase/reseed populated Chroma. Small live pipeline checks do not
+  completed integration/local-load/live-smoke slice. Detailed mock descriptions,
+  fixed USD/hour metadata and optional persistent budgets are now implemented.
+  For the earlier demo, the operator must select `parking_spaces_v3` in the real
+  `.env` and seed the new collection explicitly or at startup as documented in README;
+  real `.env` and populated project data have not been changed automatically.
+  No provider/dependency change was needed; do not erase/reseed populated Chroma.
+  Small live pipeline checks do not
   broaden the earlier browser/demo evidence or establish real-provider load capacity.
 - **First action:** inspect actual Git status and the user's next request. If asked,
   review/commit/publish the completed assignment and use README's repository links

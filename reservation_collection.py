@@ -57,6 +57,11 @@ class FieldUpdate(StrictModel):
 class ReservationExtraction(StrictModel):
     intent: Literal["information", "reservation"] = "information"
     updates: list[FieldUpdate] = Field(default_factory=list, max_length=4)
+    budget_phrase: str | None = Field(
+        default=None,
+        max_length=200,
+        description="Complete verbatim hourly USD budget phrase, including comparison/range, currency and hourly unit; otherwise null. Not a reservation field.",
+    )
 
     @model_validator(mode="after")
     def validate_intent(self) -> "ReservationExtraction":
@@ -191,7 +196,11 @@ def parse_extraction(result: object) -> ReservationExtraction:
 
 def extraction_messages(session: ReservationSession, text: str) -> list[BaseMessage]:
     return [
-        SystemMessage(EXTRACTION_RULES + "\nExisting draft: " + session.draft.model_dump_json()),
+        SystemMessage(
+            EXTRACTION_RULES
+            + "\nAlso extract an optional budget_phrase on information or reservation turns. Copy the COMPLETE exact phrase, e.g. 'under $8/hour', 'up to $8 per hour', or 'between $5 and $10/hour'. Never return just the amount, infer units, convert totals, or invent a limit. Missing/ambiguous phrases use null; Python independently validates price cues.\nExisting draft: "
+            + session.draft.model_dump_json()
+        ),
         HumanMessage(text),
     ]
 

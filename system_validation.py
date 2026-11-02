@@ -48,6 +48,7 @@ from administrator_agent import ReviewWording
 from commons.constants import DIAL_GPT_LUNA_6, DIAL_TEXT_EMBEDDING_3_SMALL
 from context_augmentation import CONTEXT_HEADER
 from parking_agent import ParkingSpaceReservationAgent
+from pricing import money
 from rag_evaluation import CLAIM_PATTERN, UNKNOWN_PATTERN
 from recording import RecordingConfig, RecordingInput, RecordingResult, recording_filename
 from recording_client import MCPRecordingClient
@@ -155,10 +156,13 @@ def synthetic_answer(messages: Sequence[BaseMessage]) -> AIMessage:
     require(CONTEXT_HEADER in text, "missing_public_evidence")
     payload = json.loads(text.rsplit(CONTEXT_HEADER, 1)[1])
     parts = []
-    for kind, label in (("working_hours", "Working hours"), ("prices", "Prices")):
+    for kind, label in (("working_hours", "Working hours"),):
         fact = payload.get("dynamic_facts", {}).get(kind, {})
         value = json.dumps(fact["value"], ensure_ascii=False) if fact.get("status") == "snapshot" else "unknown"
         parts.append(f"{label}: {value}.")
+    prices = payload.get("hourly_prices", {})
+    if prices.get("status") == "inventory":
+        parts.append(f"Prices: {money(prices['minimum_cents'])}–{money(prices['maximum_cents'])}/hour (USD).")
     if "availability_options" in payload:
         ids = [item["space_id"] for item in payload["availability_options"]]
         parts.append("Current parking options: " + (", ".join(ids) if ids else "none") + ". Suggestions only.")
@@ -215,7 +219,7 @@ def server_environment(root: Path, *, live: bool) -> dict[str, str]:
         "PYTHONUNBUFFERED": "1",
         "PARKING_CHROMA_DIRECTORY": str(root / "chroma"),
         "PARKING_SQLITE_PATH": str(root / "parking.sqlite3"),
-        "PARKING_CHROMA_COLLECTION": "parking_spaces_v2",
+        "PARKING_CHROMA_COLLECTION": "parking_spaces_v3",
         "PARKING_LOCATION_ID": "demo-central",
         "LANGSMITH_TRACING": "false",
         "LANGCHAIN_TRACING_V2": "false",
@@ -811,12 +815,10 @@ def integration_validation() -> dict:
             thread, _ = runner.thread()
             dynamic = DynamicParkingStore(server.storage)
             dynamic.upsert_fact("demo-central", "working_hours", "Monday to Friday 08:00-20:00")
-            dynamic.upsert_fact("demo-central", "prices", {"hourly": 3, "currency": "EUR"})
             runner.turn(thread, "What are the working hours and prices?")
             reply = runner.state(thread)["values"]["messages"][-1]["content"]
-            require(all(value in reply for value in ("08:00", "20:00", "3")), "public_fact_not_answered")
+            require(all(value in reply for value in ("08:00", "20:00", "$1.00", "$20.00")), "public_fact_not_answered")
             dynamic.delete_fact("demo-central", "working_hours")
-            dynamic.delete_fact("demo-central", "prices")
             cases.append({"case": "current_public_facts", "passed": True})
 
             # Offers bind to hours, not stale preview times, and changing hours invalidates them.

@@ -66,6 +66,19 @@ class LocationVocabularyTests(unittest.TestCase):
             self.assertNotIn(private, result)
         self.assertEqual(query("Alice Smith ABC-123"), "parking information")
 
+    def test_benefits_and_negated_stairs_have_public_queries(self):
+        for text, expected in (
+            ("I use a wheelchair", "step-free access limited mobility"),
+            ("I want to avoid stairs", "step-free access limited mobility"),
+            ("I carry shopping bags", "store shopping bags unloading"),
+            ("I want to stay dry", "covered sheltered pedestrian route rain"),
+            ("Away from busy traffic", "away from passing traffic perimeter walk"),
+            ("I have a stroller", "pushchair young children"),
+        ):
+            with self.subTest(text=text):
+                self.assertIn(expected, query(text))
+        self.assertNotIn(" stairs ", " " + query("avoid stairs") + " ")
+
     def test_follow_up_detection_requires_other_or_more_options(self):
         self.assertTrue(asks_other_options([HumanMessage("Show me other options.")], ContextConfig()))
         self.assertTrue(asks_other_options([HumanMessage("Any different spots?")], ContextConfig()))

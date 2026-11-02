@@ -72,7 +72,8 @@ class StartupTests(ParkingFixture):
         evidence = decode(self.agent.baseline_context)
         self.assertEqual(len(evidence["static_spaces"]), 3)
         self.assertNotIn("availability_options", evidence)
-        self.assertEqual(evidence["dynamic_facts"]["prices"], {"status": "missing"})
+        self.assertNotIn("prices", evidence["dynamic_facts"])
+        self.assertTrue(all(100 <= item["hourly_price_cents"] <= 2000 for item in evidence["static_spaces"]))
         self.model.invoke.assert_not_called()
 
     def test_populated_static_is_reused_without_loading_seed_or_embeddings(self):
@@ -226,15 +227,18 @@ class SuggestionTests(ParkingFixture):
     def test_user_topic_query_changes_similarity_ranking_and_never_exceeds_three(self):
         self.agent.config = replace(self.agent.config, context=ContextConfig(retrieval_k=20))
         with patch.object(self.static._embeddings, "embed_query", wraps=self.static._embeddings.embed_query) as embed:
-            for message, expected_query, expected_space in (
-                ("Any available spaces near the elevator?", "lift availability", "G-E02"),
-                ("Any available spaces near the entrance?", "entrance availability", "G-A01"),
+            for message, expected_query, expected_keyword in (
+                ("Any available spaces near the elevator?", "lift availability", "lift"),
+                ("Any available spaces near the entrance?", "entrance availability", "entrance"),
             ):
                 self.turn(message)
                 ids = self.state()["offered_space_ids"]
                 self.assertEqual(len(ids), 3)
                 self.assertEqual(len(set(ids)), 3)
-                self.assertEqual(ids[0], expected_space)
+                # Richer descriptions can have identical tiny fake vectors. Test
+                # keyword ranking, not an arbitrary ID tie-break or real accuracy.
+                selected = self.static.get_spaces([f"demo-central:space:{ids[0]}"], location_id="demo-central")[0]
+                self.assertIn(expected_keyword, selected.page_content.lower())
                 self.assertEqual(embed.call_args.args, (expected_query,))
         self.assertEqual(embed.call_count, 2)
 
@@ -342,16 +346,17 @@ class SuggestionTests(ParkingFixture):
         data = decode(self.state()["retrieval_context"])
         self.assertEqual(data["static_spaces"], [])
         self.assertNotIn("availability_options", data)
-        self.assertEqual(data["dynamic_facts"]["prices"]["value"], {"hourly": 9})
+        self.assertNotIn("prices", data["dynamic_facts"])
+        self.assertEqual(data["hourly_prices"]["maximum_cents"], 2000)
         self.assertEqual(data["dynamic_facts"]["availability"], {"status": "missing"})
 
     def test_generic_turn_reuses_startup_static_evidence_but_reads_current_facts(self):
-        self.dynamic.upsert_fact("demo-central", "prices", 7)
+        self.dynamic.upsert_fact("demo-central", "working_hours", "09:00-18:00")
         with patch.object(self.static, "search", side_effect=AssertionError("Use baseline")):
             self.turn("Tell me about parking")
         data = decode(self.state()["retrieval_context"])
         self.assertEqual(data["static_spaces"], decode(self.agent.baseline_context)["static_spaces"])
-        self.assertEqual(data["dynamic_facts"]["prices"]["value"], 7)
+        self.assertEqual(data["dynamic_facts"]["working_hours"]["value"], "09:00-18:00")
 
     def test_offered_ids_are_thread_scoped_and_not_publicly_writable(self):
         self.turn(thread="alice")

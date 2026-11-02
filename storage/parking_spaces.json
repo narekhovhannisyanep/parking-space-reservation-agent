@@ -1,82 +1,82 @@
 [
   {
     "space_id": "G-A01", "location_id": "demo-central", "label": "A01",
-    "description": "Beside the east-side vehicle entrance.", "source": "mock-space-inventory-v2"
+    "description": "Beside the east-side vehicle entrance on the ground floor. Easy to reach without driving through the upper levels, useful for a quick visit. The adjacent entry lane has arriving traffic, so take care when unloading.", "source": "mock-space-inventory-v3", "hourly_price_cents": 1200
   },
   {
     "space_id": "G-A02", "location_id": "demo-central", "label": "A02",
-    "description": "Beside the pedestrian lobby.", "source": "mock-space-inventory-v2"
+    "description": "Beside the ground-floor pedestrian lobby, a short level walk from the store doors. Convenient for carrying shopping bags or walking with young children. The indoor route stays sheltered in rain; pedestrians frequently pass this row.", "source": "mock-space-inventory-v3", "hourly_price_cents": 1800
   },
   {
     "space_id": "G-E01", "location_id": "demo-central", "label": "E01",
-    "description": "Along the north wall.", "source": "mock-space-inventory-v2"
+    "description": "Along the north wall on the ground floor, away from the main vehicle entry lane. Useful for visitors who prefer less passing traffic and do not mind a longer walk. Follow the marked perimeter path rather than crossing the driving aisle.", "source": "mock-space-inventory-v3", "hourly_price_cents": 400
   },
   {
     "space_id": "G-E02", "location_id": "demo-central", "label": "E02",
-    "description": "Near the lift.", "source": "mock-space-inventory-v2"
+    "description": "Near the ground-floor lift and elevator doors, with a short step-free route to the lobby. Helpful for wheelchair users, people with limited mobility, and visitors with a pushchair who want to avoid stairs. This describes the route, not a designated accessible bay.", "source": "mock-space-inventory-v3", "hourly_price_cents": 2000
   },
   {
     "space_id": "L1-B01", "location_id": "demo-central", "label": "B01",
-    "description": "On the first level beside the stairwell.", "source": "mock-space-inventory-v2"
+    "description": "On the first level beside the stairwell. The direct pedestrian route uses stairs, convenient for visitors comfortable walking down a flight. Covered parking keeps the vehicle out of rain, but this is not the shortest step-free route.", "source": "mock-space-inventory-v3", "hourly_price_cents": 700
   },
   {
     "space_id": "G-M01", "location_id": "demo-central", "label": "M01",
-    "description": "Along the south wall.", "source": "mock-space-inventory-v2"
+    "description": "Along the south wall on the ground floor, away from the busiest pedestrian row. The covered perimeter route suits visitors who prefer a quieter walk and shelter from rain. Allow a longer walk to the store than from the lobby-side spaces.", "source": "mock-space-inventory-v3", "hourly_price_cents": 600
   },
   {
     "space_id": "OUT-V01", "location_id": "demo-central", "label": "V01",
-    "description": "In the outdoor area beside the gate.", "source": "mock-space-inventory-v2"
+    "description": "In the outdoor area beside the vehicle gate. Convenient for a quick departure without driving through indoor levels. The route crosses the gate-side traffic lane and is exposed to rain, so it is less convenient when carrying several shopping bags.", "source": "mock-space-inventory-v3", "hourly_price_cents": 300
   },
   {
     "space_id": "OUT-C01", "location_id": "demo-central", "label": "C01",
-    "description": "In the outdoor area beside the west fence.", "source": "mock-space-inventory-v2"
+    "description": "In the outdoor area beside the west fence, away from the gate and main pedestrian flow. Useful for visitors willing to walk farther along the boundary path. The space and walking route are uncovered, with no shelter from rain.", "source": "mock-space-inventory-v3", "hourly_price_cents": 100
   },
   {
     "space_id": "G-A03", "location_id": "demo-central", "label": "A03",
-    "description": "Past the east entry lane, beside the ground-level pedestrian corridor.", "source": "mock-space-inventory-v2"
+    "description": "Past the east entry lane, beside the ground-level pedestrian corridor. A short covered passage leads toward the store, convenient for shopping bags and pushchairs. Use the marked crossing over the entry lane before joining the corridor.", "source": "mock-space-inventory-v3", "hourly_price_cents": 1600
   },
   {
     "space_id": "G-A04", "location_id": "demo-central", "label": "A04",
-    "description": "Opposite the west vehicle entry, facing the central aisle.", "source": "mock-space-inventory-v2"
+    "description": "Opposite the west vehicle entry, facing the central aisle on the ground floor. Straightforward to find when arriving from the west. Convenient for short visits, but vehicles turning into the aisle pass this row; unload on the pedestrian side.", "source": "mock-space-inventory-v3", "hourly_price_cents": 1100
   },
   {
     "space_id": "G-E03", "location_id": "demo-central", "label": "E03",
-    "description": "Across the ground-floor elevator lobby, along the pedestrian walkway.", "source": "mock-space-inventory-v2"
+    "description": "Across the ground-floor elevator lobby, along the marked pedestrian walkway. The level, step-free path is useful for limited mobility and pushchairs. It is a little farther from the lift doors than the nearest bay, but avoids crossing the central driving aisle.", "source": "mock-space-inventory-v3", "hourly_price_cents": 1900
   },
   {
     "space_id": "G-N01", "location_id": "demo-central", "label": "N01",
-    "description": "At the northeast corner, following the north-wall walkway.", "source": "mock-space-inventory-v2"
+    "description": "At the northeast corner, following the north-wall walkway. Away from the main entry lane and store-side pedestrian row, useful for visitors who prefer less passing traffic. The covered perimeter walk is longer than the direct route from the lobby-side bays.", "source": "mock-space-inventory-v3", "hourly_price_cents": 500
   },
   {
     "space_id": "L1-B02", "location_id": "demo-central", "label": "B02",
-    "description": "On the first level opposite the eastern stairs.", "source": "mock-space-inventory-v2"
+    "description": "On the first level opposite the eastern stairs. A covered crossing joins the stair landing, convenient for visitors traveling light who can use stairs. People wanting a step-free route need the longer path to the lift rather than the direct stair route.", "source": "mock-space-inventory-v3", "hourly_price_cents": 800
   },
   {
     "space_id": "L1-E01", "location_id": "demo-central", "label": "E01-L1",
-    "description": "On the first level across from the elevator doors.", "source": "mock-space-inventory-v2"
+    "description": "On the first level across from the elevator doors. A short level route to the lift helps visitors with shopping bags, a pushchair, or limited mobility avoid stairs. Covered parking and the indoor lobby offer shelter while moving between the vehicle and lift.", "source": "mock-space-inventory-v3", "hourly_price_cents": 1500
   },
   {
     "space_id": "L1-W01", "location_id": "demo-central", "label": "W01",
-    "description": "On the first level beside the west pedestrian passage.", "source": "mock-space-inventory-v2"
+    "description": "On the first level beside the west pedestrian passage. The covered route joins the west stair landing, useful for visitors who prefer walking down rather than waiting at the lift. The direct route includes stairs and is not suitable for avoiding steps.", "source": "mock-space-inventory-v3", "hourly_price_cents": 900
   },
   {
     "space_id": "L2-B01", "location_id": "demo-central", "label": "B01-L2",
-    "description": "On the second level beside the northern stair landing.", "source": "mock-space-inventory-v2"
+    "description": "On the second level beside the northern stair landing, farther from the busiest ground-floor rows. Useful for visitors who do not mind driving up and walking down two flights of stairs. The parking row is covered; the direct pedestrian route is not step-free.", "source": "mock-space-inventory-v3", "hourly_price_cents": 200
   },
   {
     "space_id": "L2-E01", "location_id": "demo-central", "label": "E01-L2",
-    "description": "On the second level along the corridor to the elevator lobby.", "source": "mock-space-inventory-v2"
+    "description": "On the second level along the covered corridor to the elevator lobby. A level path reaches the lift without stairs, helpful with shopping bags or limited mobility. The walk is longer than from a bay directly beside the lift doors, and reaching this row requires driving up two levels.", "source": "mock-space-inventory-v3", "hourly_price_cents": 1000
   },
   {
     "space_id": "OUT-V02", "location_id": "demo-central", "label": "V02",
-    "description": "In the outdoor area just inside the south entry gate.", "source": "mock-space-inventory-v2"
+    "description": "In the outdoor area just inside the south entry gate. Easy to find from the south approach without entering indoor levels. Useful for a short stop, but arriving vehicles pass nearby and the walk to the building is exposed to wind and rain.", "source": "mock-space-inventory-v3", "hourly_price_cents": 500
   },
   {
     "space_id": "OUT-C02", "location_id": "demo-central", "label": "C02",
-    "description": "In the outdoor area along the eastern boundary path.", "source": "mock-space-inventory-v2"
+    "description": "In the outdoor area along the eastern boundary path. The marked path avoids the central driving aisle, useful for visitors who prefer a perimeter walk away from through traffic. Farther from the store doors, with no overhead shelter in rain.", "source": "mock-space-inventory-v3", "hourly_price_cents": 200
   },
   {
     "space_id": "OUT-P01", "location_id": "demo-central", "label": "P01",
-    "description": "In the outdoor area opposite the path to the pedestrian lobby.", "source": "mock-space-inventory-v2"
+    "description": "In the outdoor area opposite the path to the pedestrian lobby. A short level walk leads to the store, convenient with shopping bags or a pushchair. No stairs are needed along this route, but the outdoor portion has no shelter from rain.", "source": "mock-space-inventory-v3", "hourly_price_cents": 1400
   }
 ]

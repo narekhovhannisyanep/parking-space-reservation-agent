@@ -22,13 +22,16 @@ class ParkingSpaceTests(unittest.TestCase):
         ParkingSpace.validate_document(doc)
 
     def test_minimal_fields_and_vehicle_agnostic_document(self):
-        self.assertEqual(set(asdict(self.space)), {"space_id", "location_id", "label", "description", "source"})
+        self.assertEqual(
+            set(asdict(self.space)), {"space_id", "location_id", "label", "description", "source", "hourly_price_cents"}
+        )
         doc = self.space.to_document()
         self.assertIn("Accepts any vehicle", doc.page_content)
         self.assertEqual(
-            set(doc.metadata), {"space_id", "location_id", "label", "source", "record_type", "schema_version"}
+            set(doc.metadata),
+            {"space_id", "location_id", "label", "source", "record_type", "schema_version", "hourly_price_cents"},
         )
-        self.assertEqual(doc.metadata["schema_version"], 2)
+        self.assertEqual(doc.metadata["schema_version"], 3)
 
     def test_identity_is_scoped_by_location_and_immutable(self):
         other = replace(self.space, location_id="other")
@@ -44,6 +47,7 @@ class ParkingSpaceTests(unittest.TestCase):
             "label": [" ", None, True, "x" * 201],
             "description": [" ", "x" * 401, " untrimmed", []],
             "source": [None, " ", "x" * 201],
+            "hourly_price_cents": [True, 0, 99, 2001, 500.0, "500", None],
         }
         for name, values in cases.items():
             for value in values:
@@ -96,13 +100,13 @@ class SpaceFilterTests(unittest.TestCase):
     def test_base_filter_always_scopes_location_type_and_version(self):
         self.assertEqual(
             SpaceFilters().where("north"),
-            {"$and": [{"location_id": "north"}, {"record_type": "parking_space"}, {"schema_version": 2}]},
+            {"$and": [{"location_id": "north"}, {"record_type": "parking_space"}, {"schema_version": 3}]},
         )
 
     def test_exact_space_filter_preserves_scope(self):
         self.assertEqual(
             SpaceFilters(space_id="A01").where("north")["$and"],
-            [{"location_id": "north"}, {"record_type": "parking_space"}, {"schema_version": 2}, {"space_id": "A01"}],
+            [{"location_id": "north"}, {"record_type": "parking_space"}, {"schema_version": 3}, {"space_id": "A01"}],
         )
 
     def test_invalid_filter_values_and_removed_fields_are_rejected(self):
@@ -126,7 +130,8 @@ class SpaceFilterTests(unittest.TestCase):
             "zone",
         ):
             with self.subTest(name=name), self.assertRaises(TypeError):
-                SpaceFilters(**{name: "not needed"})
+                invalid: Any = {name: "not needed"}
+                SpaceFilters(**invalid)
 
     def test_filters_are_immutable_and_do_not_share_returned_queries(self):
         filters = SpaceFilters(space_id="A01")

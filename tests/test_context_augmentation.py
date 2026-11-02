@@ -26,7 +26,7 @@ from storage.dynamic import DynamicFact
 
 
 def space(identifier="A1", location="demo-central", description="Beside the entrance."):
-    return ParkingSpace(identifier, location, identifier, description, "reviewed-inventory").to_document()
+    return ParkingSpace(identifier, location, identifier, description, "reviewed-inventory", 500).to_document()
 
 
 def fact(kind: Any = "prices", value=None, location="demo-central"):
@@ -66,9 +66,10 @@ class ContextTests(unittest.TestCase):
         data = decode(context)
         self.static.search.assert_called_once_with("entrance", location_id="demo-central", k=3)
         self.dynamic.list_facts.assert_called_once_with("demo-central")
-        self.assertEqual(data["dynamic_facts"]["prices"]["value"]["hourly"], 9)
+        self.assertNotIn("prices", data["dynamic_facts"])
+        self.assertEqual(data["static_spaces"][0]["hourly_price_cents"], 500)
         self.assertEqual(data["dynamic_facts"]["availability"]["value"], {"A1": False})
-        self.assertEqual(data["dynamic_facts"]["prices"]["updated_at"], "2026-10-28T00:00:00+00:00")
+        self.assertEqual(data["dynamic_facts"]["working_hours"]["updated_at"], "2026-10-28T00:00:00+00:00")
         self.assertEqual(data["static_spaces"][0]["document_id"], "demo-central:space:A1")
         prompt = augmented_messages("Rules", [HumanMessage("Question")], context)
         self.assertIn(CONTEXT_RULES, prompt[0].content)
@@ -78,11 +79,11 @@ class ContextTests(unittest.TestCase):
 
     def test_missing_empty_and_null_facts_do_not_invent_defaults(self):
         self.static.search.return_value = []
-        self.dynamic.list_facts.return_value = [fact("prices", 0), fact("availability", None)]
+        self.dynamic.list_facts.return_value = [fact("working_hours", 0), fact("availability", None)]
         data = decode(self.retrieve())
         self.assertEqual(data["static_spaces"], [])
-        self.assertEqual(data["dynamic_facts"]["working_hours"], {"status": "missing"})
-        self.assertEqual(data["dynamic_facts"]["prices"]["value"], 0)
+        self.assertNotIn("prices", data["dynamic_facts"])
+        self.assertEqual(data["dynamic_facts"]["working_hours"]["value"], 0)
         self.assertIsNone(data["dynamic_facts"]["availability"]["value"])
 
     def test_retrieval_never_modifies_evidence_or_writes_to_either_store(self):
@@ -94,17 +95,18 @@ class ContextTests(unittest.TestCase):
         context = self.retrieve()
         self.assertEqual(document, original)
         self.assertEqual(snapshot.value, {"hourly": 9})
-        self.assertIn('"hourly":9', context)
+        self.assertIn('"hourly_price_cents":500', context)
+        self.assertNotIn('"hourly":9', context)
         self.static.upsert_documents.assert_not_called()
         self.static.delete_documents.assert_not_called()
         self.dynamic.upsert_fact.assert_not_called()
         self.dynamic.delete_fact.assert_not_called()
 
     def test_intact_dynamic_snapshot_has_budget_priority_over_static_spaces(self):
-        self.dynamic.list_facts.return_value = [fact("prices", {"details": "x" * 1600})]
+        self.dynamic.list_facts.return_value = [fact("working_hours", {"details": "x" * 1600})]
         context = self.retrieve(config=ContextConfig(max_context_chars=2000))
         data = decode(context)
-        self.assertEqual(data["dynamic_facts"]["prices"]["value"], {"details": "x" * 1600})
+        self.assertEqual(data["dynamic_facts"]["working_hours"]["value"], {"details": "x" * 1600})
         self.assertEqual(data["static_spaces"], [])
         self.assertEqual(data["static_records_omitted"], 1)
         self.assertLessEqual(len(context), 2000)
@@ -138,11 +140,11 @@ class ContextTests(unittest.TestCase):
     def test_budget_omits_whole_records_and_prioritizes_dynamic_facts(self):
         self.static.search.return_value = [space(description="Large"), space("A2")]
         self.static.search.return_value[0].page_content = "x" * 5000
-        self.dynamic.list_facts.return_value = [fact("prices", "€" * 5000), fact("availability", False)]
+        self.dynamic.list_facts.return_value = [fact("working_hours", "€" * 5000), fact("availability", False)]
         context = self.retrieve(config=ContextConfig(max_context_chars=2000))
         self.assertLessEqual(len(context), 2000)
         data = decode(context)
-        self.assertEqual(data["dynamic_facts"]["prices"], {"status": "omitted_budget"})
+        self.assertEqual(data["dynamic_facts"]["working_hours"], {"status": "omitted_budget"})
         self.assertIs(data["dynamic_facts"]["availability"]["value"], False)
         self.assertEqual([item["space_id"] for item in data["static_spaces"]], ["A2"])
         self.assertEqual(data["static_records_omitted"], 1)
@@ -150,7 +152,10 @@ class ContextTests(unittest.TestCase):
     def test_budget_boundaries_and_k_cap_keep_valid_json(self):
         self.static.search.return_value = [space(str(i)) for i in range(12)]
         for length in range(1500, 2050, 7):
-            self.dynamic.list_facts.return_value = [fact("prices", "x" * length), fact("availability", "y" * 100)]
+            self.dynamic.list_facts.return_value = [
+                fact("working_hours", "x" * length),
+                fact("availability", "y" * 100),
+            ]
             context = self.retrieve(config=ContextConfig(max_context_chars=2000, retrieval_k=2))
             self.assertLessEqual(len(context), 2000)
             self.assertLessEqual(len(decode(context)["static_spaces"]), 2)
@@ -248,32 +253,32 @@ class GraphContextTests(unittest.IsolatedAsyncioTestCase):
         embeddings.assert_not_called()
         prompt = self.model.invoke.call_args.args[0]
         data = decode(CONTEXT_HEADER + prompt[-1].content.split(CONTEXT_HEADER)[-1])
-        self.assertEqual(data["dynamic_facts"]["prices"], {"status": "missing"})
+        self.assertEqual(data["hourly_prices"], {"status": "missing", "currency": "USD"})
         self.assertEqual(set(result), {"messages"})
         self.assertEqual(result["messages"][0].content, "Prices?")
 
     def test_each_turn_refreshes_context_without_polluting_history_or_other_threads(self):
         self.static.upsert_documents([space(), space("A2", description="Beside the lift."), space("B1", "other")])
-        self.dynamic.upsert_fact("demo-central", "prices", {"hourly": 5})
-        self.dynamic.upsert_fact("other", "prices", "other-location-secret")
+        self.dynamic.upsert_fact("demo-central", "working_hours", "08:00-17:00")
+        self.dynamic.upsert_fact("other", "working_hours", "other-location-secret")
         alice: RunnableConfig = {"configurable": {"thread_id": "alice"}}
         bob: RunnableConfig = {"configurable": {"thread_id": "bob"}}
         self.agent.graph.invoke({"messages": [("user", "Alice asks about the entrance")]}, alice)
-        self.dynamic.upsert_fact("demo-central", "prices", {"hourly": 9})
+        self.dynamic.upsert_fact("demo-central", "working_hours", "09:00-18:00")
         self.agent.graph.invoke({"messages": [("user", "Bob asks prices")]}, bob)
-        self.agent.graph.invoke({"messages": [("user", "How much now?")]}, alice)
+        self.agent.graph.invoke({"messages": [("user", "What are the opening hours now?")]}, alice)
         prompt = self.model.invoke.call_args.args[0]
-        self.assertIn('"hourly":9', prompt[-1].content)
-        self.assertNotIn('"hourly":5', prompt[-1].content)
+        self.assertIn("09:00-18:00", prompt[-1].content)
+        self.assertNotIn("08:00-17:00", prompt[-1].content)
         self.assertNotIn("other-location-secret", str(prompt))
         self.assertNotIn("Bob", str(prompt))
         self.assertEqual(prompt[1].content, "Alice asks about the entrance")
         self.assertEqual(len(self.agent.graph.get_state(alice).values["messages"]), 4)
-        self.dynamic.delete_fact("demo-central", "prices")
-        self.agent.graph.invoke({"messages": [("user", "Prices again?")]}, alice)
+        self.dynamic.delete_fact("demo-central", "working_hours")
+        self.agent.graph.invoke({"messages": [("user", "Hours again?")]}, alice)
         prompt = self.model.invoke.call_args.args[0]
-        self.assertIn('"prices":{"status":"missing"}', prompt[-1].content)
-        self.assertNotIn('"hourly":9', prompt[-1].content)
+        self.assertIn('"working_hours":{"status":"missing"}', prompt[-1].content)
+        self.assertNotIn("09:00-18:00", prompt[-1].content)
         self.assertNotIn("retrieval_context", self.agent.graph.get_input_jsonschema()["properties"])
         self.assertIn("context_augmentation", self.agent.graph.get_graph().nodes)
 

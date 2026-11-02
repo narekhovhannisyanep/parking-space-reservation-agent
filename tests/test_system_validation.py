@@ -18,6 +18,7 @@ from langchain_core.messages import HumanMessage
 from context_augmentation import CONTEXT_HEADER
 from parking_agent import AgentConfig
 from recording import RecordingResult
+from storage import StaticParkingStore
 from system_validation import (
     ScenarioRunner,
     ValidationFailure,
@@ -128,7 +129,8 @@ class FixtureTests(unittest.TestCase):
 
     def test_stub_answer_uses_current_evidence_not_history_and_rejects_private_input(self):
         context = {
-            "dynamic_facts": {"prices": {"status": "snapshot", "value": 3}, "working_hours": {"status": "missing"}},
+            "dynamic_facts": {"working_hours": {"status": "missing"}},
+            "hourly_prices": {"status": "inventory", "minimum_cents": 300, "maximum_cents": 1000, "currency": "USD"},
             "availability_options": [{"space_id": "G-A01"}],
         }
         answer = synthetic_answer([HumanMessage("What is available?" + CONTEXT_HEADER + json.dumps(context))])
@@ -171,6 +173,30 @@ class FixtureTests(unittest.TestCase):
 
 
 class ServerTests(unittest.TestCase):
+    def test_socket_budget_filter_approval_and_real_recording(self):
+        with (
+            TemporaryDirectory(prefix="parking-stage4-") as directory,
+            ValidationServer(Path(directory)) as server,
+        ):
+            runner = ScenarioRunner(server)
+            thread = runner.prepare()
+            confirmed = runner.state(thread)["values"]["reservation"]
+            runner.turn(thread, "Available under $5/hour")
+            values = runner.state(thread)["values"]
+            self.assertEqual(values["reservation"], confirmed)
+            self.assertEqual(values["budget"]["maximum_cents"], 500)
+            self.assertFalse(values["budget"]["maximum_inclusive"])
+            options = values["offered_space_ids"]
+            self.assertEqual(len(options), 3)
+            documents = StaticParkingStore(server.storage).get_spaces(
+                [f"demo-central:space:{identifier}" for identifier in options], location_id="demo-central"
+            )
+            self.assertTrue(all(document.metadata["hourly_price_cents"] < 500 for document in documents))
+            runner.submit(thread, options[0])
+            runner.resume(thread, {"decision": "approve"})
+            self.assertTrue(runner.outcome(thread, "approved")["recorded"])
+            self.assertEqual(runner.check_storage()["files"], 1)
+
     def test_bootstrap_requires_its_own_storage_settings_before_loading_the_server(self):
         application = SimpleNamespace(
             parking_agent=Mock(config=AgentConfig()),

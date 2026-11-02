@@ -11,6 +11,8 @@ from test_static_storage import KeywordEmbeddings
 
 from rag_evaluation import (
     ANSWER_CASES,
+    BENEFIT_CASES,
+    BUDGET_CASES,
     RETRIEVAL_CASES,
     AnswerCase,
     Evaluator,
@@ -40,7 +42,7 @@ class MetricTests(unittest.TestCase):
 
     def test_labels_reference_fixture_spaces(self):
         inventory = {space.space_id for space in load_spaces()}
-        for case in RETRIEVAL_CASES:
+        for case in RETRIEVAL_CASES + BENEFIT_CASES:
             with self.subTest(case=case.identifier):
                 self.assertTrue(case.relevant)
                 self.assertLessEqual(case.relevant, inventory)
@@ -66,6 +68,8 @@ class HarnessTests(unittest.TestCase):
         for row in report["per_case"]:
             self.assertLessEqual(len(row["offered"]), 3)
         self.assertEqual(report["follow_ups"]["failures"], [])
+        self.assertEqual(report["benefits"]["cases"], len(BENEFIT_CASES))
+        self.assertEqual(report["budgets"]["passed"], len(BUDGET_CASES))
         self.assertIn("context_augmentation", report["latency"])
 
     def test_answer_checks_are_rule_based(self):

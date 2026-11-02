@@ -34,13 +34,14 @@ def detector(text):
 
 
 def public_document(text="Beside the entrance.", **changes):
-    return ParkingSpace(
-        **{
+    return ParkingSpace.from_record(
+        {
             "space_id": "G-A01",
             "location_id": "demo-central",
             "label": "A01",
             "description": text,
             "source": "reviewed-inventory",
+            "hourly_price_cents": 500,
             **changes,
         }
     ).to_document()
@@ -156,7 +157,7 @@ class GuardStorageTests(unittest.TestCase):
         with self.assertRaises(GuardrailError):
             render_context([document], [], ContextConfig(), privacy_guard=self.guard)
         self.assertEqual(document, original)
-        fact = DynamicFact("demo-central", "prices", {"contact": "john@example.com"}, datetime.now(UTC))
+        fact = DynamicFact("demo-central", "working_hours", {"contact": "john@example.com"}, datetime.now(UTC))
         with self.assertRaises(GuardrailError):
             render_context([], [fact], ContextConfig(), privacy_guard=self.guard)
 

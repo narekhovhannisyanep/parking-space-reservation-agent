@@ -17,6 +17,7 @@ from openai import APIError
 from administrator_agent import AdministratorAgent, ReviewWording
 from guardrails import guarded_model_config
 from parking_agent import AgentConfig, ParkingSpaceReservationAgent
+from pricing import resolve_budget
 from reservation_collection import (
     EXTRACTION_FAILURE,
     READY_REPLY,
@@ -43,6 +44,7 @@ class LiveReservationModelTests(unittest.TestCase):
         static.search.return_value = []
         static.list_space_ids.return_value = []
         static.get_spaces.return_value = []
+        static.hourly_price_summary.return_value = {"status": "missing", "currency": "USD"}
         dynamic = Mock(spec=DynamicParkingStore)
         dynamic.list_facts.return_value = []
         ledger = Mock(spec=ReservationStore)
@@ -102,6 +104,28 @@ class LiveReservationModelTests(unittest.TestCase):
         self.assertNotIn("timezone", state["draft"])
         result = self.safely(lambda: graph.invoke({"messages": [("user", f"/confirm {state['revision']}")]}, config))
         self.assertEqual(result["messages"][-1].content, READY_REPLY)
+
+    def test_live_budget_extraction_and_independent_python_validation(self):
+        for text, minimum, maximum, inclusive in (
+            ("Any available spaces under $8/hour?", None, 800, False),
+            ("Show available spaces up to $8 per hour.", None, 800, True),
+            ("I want a spot between $5 and $10/hour.", 500, 1000, True),
+        ):
+            with self.subTest(text=text):
+                raw = self.safely(
+                    lambda text=text: self.agent._get_reservation_extractor().invoke(
+                        extraction_messages(ReservationSession(), text), config=guarded_model_config({})
+                    )
+                )
+                proposal = self.safely(lambda raw=raw: parse_extraction(raw))
+                self.assertIsNotNone(proposal.budget_phrase, "Model omitted the explicit budget phrase.")
+                budget = self.safely(lambda text=text, proposal=proposal: resolve_budget(text, proposal.budget_phrase))
+                assert budget is not None
+                self.assertEqual(
+                    (budget.minimum_cents, budget.maximum_cents, budget.maximum_inclusive),
+                    (minimum, maximum, inclusive),
+                )
+                self.assertEqual(proposal.updates, [])
 
     def check_live_administrator_review(self, *, asynchronous: bool):
         start = datetime.now(UTC)

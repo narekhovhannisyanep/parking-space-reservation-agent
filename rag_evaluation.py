@@ -27,6 +27,7 @@ from langgraph.checkpoint.memory import InMemorySaver
 
 from context_augmentation import offered_space_ids
 from parking_agent import AgentConfig, ParkingSpaceReservationAgent
+from pricing import money
 from reservation_collection import ReservationExtraction
 from storage import DynamicParkingStore, StaticParkingStore
 from storage.dynamic import FactKind, JSONValue
@@ -39,6 +40,25 @@ STAIRS = frozenset({"L1-B01", "L1-B02", "L2-B01"})
 OUTDOOR = frozenset({"OUT-V01", "OUT-C01", "OUT-V02", "OUT-C02", "OUT-P01"})
 ENTRANCE = frozenset({"G-A01", "G-A03", "G-A04", "OUT-V02"})
 FIRST_LEVEL = frozenset({"L1-B01", "L1-B02", "L1-E01", "L1-W01"})
+STEP_FREE = frozenset({"G-E02", "G-E03", "L1-E01", "L2-E01", "OUT-P01"})
+SHOPPING = frozenset({"G-A02", "G-A03", "G-E02", "G-E03", "L1-E01", "L2-E01", "OUT-P01"})
+SHELTER = frozenset(
+    {
+        "G-A02",
+        "G-A03",
+        "G-E01",
+        "G-E02",
+        "G-E03",
+        "G-M01",
+        "G-N01",
+        "L1-B01",
+        "L1-B02",
+        "L1-E01",
+        "L1-W01",
+        "L2-B01",
+        "L2-E01",
+    }
+)
 
 
 @dataclass(frozen=True)
@@ -75,6 +95,53 @@ class AnswerCase:
     facts: tuple[tuple[FactKind, JSONValue], ...] = ()
     expected: tuple[str, ...] = ()
     private: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class BudgetCase:
+    identifier: str
+    text: str
+    minimum: int = 0
+    maximum: int = 1_000_000_000
+    strict: bool = False
+    clarify: bool = False
+    blocked: bool = False
+
+
+BENEFIT_CASES = (
+    RetrievalCase("wheelchair-route", "Any available spaces for a wheelchair user?", STEP_FREE),
+    RetrievalCase("avoid-stairs", "I want a parking spot where I can avoid stairs.", STEP_FREE),
+    RetrievalCase("shopping-bags", "Available parking convenient for carrying shopping bags?", SHOPPING),
+    RetrievalCase(
+        "pushchair",
+        "Any spaces convenient with a stroller?",
+        frozenset({"G-A02", "G-A03", "G-E02", "G-E03", "L1-E01", "OUT-P01"}),
+    ),
+    RetrievalCase("rain-route", "Available spaces with a sheltered walk in the rain?", SHELTER),
+    RetrievalCase(
+        "less-traffic",
+        "I'd like a spot away from passing traffic.",
+        frozenset({"G-E01", "G-M01", "G-N01", "OUT-C01", "OUT-C02", "L2-B01"}),
+    ),
+    # Challenge paraphrases frozen before measurement, not added to vocabulary after a failure.
+    RetrievalCase("walking-difficulty-challenge", "I have trouble walking. Any available spots?", STEP_FREE),
+    RetrievalCase("soaked-challenge", "A parking spot where I won't get soaked on the way inside?", SHELTER),
+)
+
+BUDGET_CASES = (
+    BudgetCase("strict-eight", "Available under $8/hour", maximum=800, strict=True),
+    BudgetCase("inclusive-eight", "Available up to $8/hour", maximum=800),
+    BudgetCase("range", "Available between $5 and $10/hour", minimum=500, maximum=1000),
+    BudgetCase("decimal", "Available at most $8.50/hour", maximum=850),
+    BudgetCase("word-budget", "Budget: eight dollars an hour", maximum=800),
+    BudgetCase("no-affordable-space", "Available up to $0.50/hour", maximum=50),
+    BudgetCase("all-blocked", "Available up to $20/hour", maximum=2000, blocked=True),
+    BudgetCase("total-ambiguous", "Available with a budget of $20 total", clarify=True),
+    BudgetCase("unit-ambiguous", "Available under $8", clarify=True),
+    BudgetCase("wrong-currency", "Available under 8 EUR/hour", clarify=True),
+    BudgetCase("range-reversed", "Available between $10 and $5/hour", clarify=True),
+    BudgetCase("fuzzy-budget", "Something cheap please", clarify=True),
+)
 
 
 RETRIEVAL_CASES = (
@@ -144,11 +211,16 @@ ANSWER_CASES = (
         "prices-known",
         ("How much does parking cost per hour?",),
         ("contains_expected", "no_booking_claim"),
-        facts=(("prices", {"hourly": 3, "currency": "EUR"}),),
-        expected=("3",),
+        expected=("$1.00", "$20.00", "USD"),
     ),
     AnswerCase("hours-missing", ("When do you open?",), ("states_unknown", "no_booking_claim")),
-    AnswerCase("prices-missing", ("What are the prices?",), ("states_unknown", "no_booking_claim")),
+    AnswerCase(
+        "legacy-prices-ignored",
+        ("What are the prices?",),
+        ("contains_expected", "no_legacy_prices", "no_booking_claim"),
+        facts=(("prices", {"hourly": 999, "currency": "EUR"}),),
+        expected=("$1.00", "$20.00", "USD"),
+    ),
     AnswerCase(
         "offer-elevator",
         ("Any free spaces near the elevator?",),
@@ -264,6 +336,7 @@ class Evaluator:
         self.static = StaticParkingStore(storage, embeddings=self.embeddings)
         self.dynamic = DynamicParkingStore(storage)
         self.inventory = {space.space_id: space.label for space in load_spaces()}
+        self.rates = {space.space_id: space.hourly_price_cents for space in load_spaces()}
 
     def agent(self, *, live_models: bool) -> ParkingSpaceReservationAgent:
         stub_llm: Any = RunnableLambda(lambda _: AIMessage("Evaluation stub response."))
@@ -317,6 +390,50 @@ class Evaluator:
                     "rr": reciprocal_rank(offered, case.relevant),
                 }
             )
+        benefit_rows: list[dict[str, Any]] = []
+        for case in BENEFIT_CASES:
+            offered = self.turn(agent, case.text, f"benefit-{case.identifier}")["offered"] or []
+            benefit_rows.append(
+                {
+                    "case": case.identifier,
+                    "offered": offered,
+                    "capped_recall": round(capped_recall_at_k(offered, case.relevant), 3),
+                    "precision": round(precision_at_k(offered, case.relevant), 3),
+                    "rr": round(reciprocal_rank(offered, case.relevant), 3),
+                }
+            )
+        budget_rows: list[dict[str, Any]] = []
+        for case in BUDGET_CASES:
+            self.set_facts((("availability", False),) if case.blocked else ())
+            thread = f"budget-{case.identifier}"
+            result = self.turn(agent, case.text, thread)
+            offered = result["offered"] or []
+            state = agent.graph.get_state({"configurable": {"thread_id": thread}}).values
+            eligible = (
+                [
+                    identifier
+                    for identifier, rate in self.rates.items()
+                    if case.minimum <= rate and (rate < case.maximum if case.strict else rate <= case.maximum)
+                ]
+                if not case.blocked and not case.clarify
+                else []
+            )
+            compliant = all(identifier in eligible for identifier in offered)
+            displayed = all(money(self.rates[identifier]) + "/hour" in result["reply"] for identifier in offered)
+            count_correct = len(offered) == min(3, len(eligible))
+            clarified = bool(state.get("budget_pending")) == case.clarify
+            budget_rows.append(
+                {
+                    "case": case.identifier,
+                    "offered": offered,
+                    "compliant": compliant,
+                    "prices_displayed": displayed,
+                    "count_correct": count_correct,
+                    "clarification_correct": clarified,
+                    "passed": compliant and displayed and count_correct and clarified,
+                }
+            )
+        self.set_facts(())
         requests: list[dict[str, Any]] = []
         for case in REQUEST_CASES:
             offered = self.turn(agent, case.text, f"request-{case.identifier}")["offered"]
@@ -360,6 +477,18 @@ class Evaluator:
                 "failures": [row["case"] for row in follow_ups if not (row["nonempty"] and row["disjoint"])],
             },
             "latency": latency_summary(self.latencies),
+            "benefits": {
+                "cases": len(benefit_rows),
+                "capped_recall_at_k": round(mean(row["capped_recall"] for row in benefit_rows), 3),
+                "precision_at_k": round(mean(row["precision"] for row in benefit_rows), 3),
+                "mrr": round(mean(row["rr"] for row in benefit_rows), 3),
+                "per_case": benefit_rows,
+            },
+            "budgets": {
+                "cases": len(budget_rows),
+                "passed": sum(row["passed"] for row in budget_rows),
+                "per_case": budget_rows,
+            },
         }
 
     def check(self, name: str, case: AnswerCase, reply: str, offered: list[str] | None, previous: list[str]) -> bool:
@@ -368,6 +497,7 @@ class Evaluator:
             "contains_expected": lambda: all(value.lower() in reply.lower() for value in case.expected),
             "states_unknown": lambda: UNKNOWN_PATTERN.search(reply) is not None,
             "no_booking_claim": lambda: CLAIM_PATTERN.search(reply) is None,
+            "no_legacy_prices": lambda: "999" not in reply and "EUR" not in reply,
             "no_private_values": lambda: not any(mentions(reply, value) for value in case.private),
             "offers_nonempty": lambda: bool(offered_ids),
             "no_offers": lambda: offered == [],
