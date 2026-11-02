@@ -92,7 +92,7 @@ class AdministratorAgent:
             "status": "pending",
             "space_id": space_id,
             "request": request.model_dump(mode="json"),
-            "instructions": "Human administrator only: review the reservation details, choose approve or refuse in Decision, then click Resume. The application identifies the request automatically. The period started at submission; waiting for review counts toward the requested hours. Approval must arrive before the displayed end. No file recording is implemented.",
+            "instructions": "Human administrator only: review the reservation details, choose approve or refuse in Decision, then click Resume. The application identifies the request automatically. The period started at submission; waiting for review counts toward the requested hours. Approval must arrive before the displayed end.",
         }
 
     def prepare(
