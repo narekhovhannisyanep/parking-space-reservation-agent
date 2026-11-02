@@ -103,7 +103,7 @@ class LiveReservationModelTests(unittest.TestCase):
         self.assertNotIn("start", state["request"])
         self.assertNotIn("timezone", state["draft"])
         result = self.safely(lambda: graph.invoke({"messages": [("user", f"/confirm {state['revision']}")]}, config))
-        self.assertEqual(result["messages"][-1].content, READY_REPLY)
+        self.assertTrue(result["messages"][-1].text.startswith(READY_REPLY))
 
     def test_live_budget_extraction_and_independent_python_validation(self):
         for text, minimum, maximum, inclusive in (
@@ -126,6 +126,41 @@ class LiveReservationModelTests(unittest.TestCase):
                     (minimum, maximum, inclusive),
                 )
                 self.assertEqual(proposal.updates, [])
+
+    def test_live_space_reference_is_not_a_vehicle_update(self):
+        text = "Let's reserve OUT-P01 for 6 hours."
+        raw = self.safely(
+            lambda: self.agent._get_reservation_extractor().invoke(
+                extraction_messages(ReservationSession(), text), config=guarded_model_config({})
+            )
+        )
+        proposal = self.safely(lambda: parse_extraction(raw))
+        fields = {update.field: update.value for update in proposal.updates}
+        self.assertNotIn("car_number", fields)
+        self.assertEqual(proposal.intent, "reservation")
+        self.assertIn("duration_hours", fields)
+
+    def test_live_negative_and_vague_corrections_are_structured_not_positive_values(self):
+        for text, field in (("my vehicle id isn't OUT-P01", "car_number"), ("My surname is incorrect.", "surname")):
+            with self.subTest(field=field):
+                raw = self.safely(
+                    lambda text=text: self.agent._get_reservation_extractor().invoke(
+                        extraction_messages(ReservationSession(), text), config=guarded_model_config({})
+                    )
+                )
+                proposal = self.safely(lambda raw=raw: parse_extraction(raw))
+                self.assertEqual(proposal.updates, [])
+                self.assertEqual([rejection.field for rejection in proposal.rejections], [field])
+                self.assertIn(proposal.rejections[0].phrase, text)
+        text = "Those details are wrong."
+        raw = self.safely(
+            lambda: self.agent._get_reservation_extractor().invoke(
+                extraction_messages(ReservationSession(), text), config=guarded_model_config({})
+            )
+        )
+        proposal = self.safely(lambda: parse_extraction(raw))
+        self.assertIsNotNone(proposal.disagreement_phrase)
+        self.assertEqual(proposal.updates, [])
 
     def check_live_administrator_review(self, *, asynchronous: bool):
         start = datetime.now(UTC)

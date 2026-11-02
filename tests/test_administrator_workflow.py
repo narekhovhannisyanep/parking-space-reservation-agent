@@ -238,7 +238,7 @@ class AdministratorWorkflowTests(AdministratorWorkflowFixture):
         self.assertIn("offered", result["messages"][-1].content)
         self.composer.invoke.assert_not_called()
 
-    def test_duration_change_invalidates_previous_offers(self):
+    def test_duration_change_requires_confirmation_and_revalidation_before_submission(self):
         self.fill()
         offered = self.options()
         self.extraction = ReservationExtraction(
@@ -246,10 +246,15 @@ class AdministratorWorkflowTests(AdministratorWorkflowFixture):
         )
         self.turn("Change duration to " + self.extraction.updates[0].value + " hours")
         self.extraction = ReservationExtraction()
-        self.turn(f"/confirm {self.state()['reservation']['revision']}")
         result = self.turn(f"/submit {offered[0]}")
         self.assertNotIn("__interrupt__", result)
-        self.assertEqual(self.state()["offered_space_ids"], [])
+        self.assertIsNone(self.state()["offer_duration_hours"])
+        self.turn(f"/confirm {self.state()['reservation']['revision']}")
+        self.assertEqual(self.state()["offered_space_ids"], offered)
+        self.assertEqual(self.state()["offer_duration_hours"], 3)
+        result = self.turn(f"/submit {offered[0]}")
+        self.assertIn("__interrupt__", result)
+        self.decide(result["__interrupt__"][0], "refuse")
 
     def test_conflict_refreshes_semantic_options_and_does_not_contact_admin(self):
         self.fill()
@@ -271,9 +276,13 @@ class AdministratorWorkflowTests(AdministratorWorkflowFixture):
         self.turn("/new", other)
         self.now = END
         self.fill(other, duration_hours="1")
-        with patch.object(self.agent.static_store, "search", wraps=self.agent.static_store.search) as search:
+        with patch.object(
+            self.agent.reservation_store, "blocked_spaces", wraps=self.agent.reservation_store.blocked_spaces
+        ) as blocked:
             self.options(other)
-        self.assertIn(f"demo-central:space:{space}", search.call_args.kwargs["eligible_ids"])
+        start, end = blocked.call_args.args[1:]
+        self.assertEqual(start, END)
+        self.assertNotIn(space, self.agent.reservation_store.blocked_spaces("demo-central", start, end))
         self.assertEqual(self.record(interrupt.value["request_id"]).status, "pending")
 
     def test_invalid_decision_only_responses_never_approve_and_can_retry(self):

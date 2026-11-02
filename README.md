@@ -24,7 +24,7 @@ reliability, evaluation, and testing remain part of the assignment.
 | 1: RAG/chatbot | Startup-ready Chroma/SQLite stores, 20 detailed mock descriptions with USD/hour metadata, optional validated persistent budgets, three availability/price-filtered semantic options with deterministic priced entries, draft confirmation, privacy guards, and measured retrieval/answer evaluation | Optional semantic retrieval tuning (see RAG_EVALUATION.md limits) |
 | 2: Human approval | Second LangChain communication agent, explicit submission, SQLite period holds, typed Studio review, approval/refusal and user outcome replies; offline integration/race/replay/streaming tests; live extraction and sync/async administrator smoke checks; user-reported Studio demo | No remaining implementation for the selected Stage 2 scope; verification limits below |
 | 3: Approved recording | Narrow Python stdio MCP service, read-only approval checks, atomic per-request files, bounded/manual retries, safe outcome replies, private permissions and startup cleanup; real MCP and Agent Server integration tests | No remaining implementation for the selected Stage 3 scope; trusted-local limits below |
-| 4: Orchestration | Complete graph, 11 real HTTP/server/stdio scenarios, 90 local load conversations at concurrency 1/5/10, ten-way contention check, two real Azure/DIAL pipeline smoke conversations and measured validation report | No implementation remaining for the selected slice; repository publication/submission is a separate operator action; see report limits |
+| 4: Orchestration | Complete graph, 13 current HTTP/server/stdio scenarios, historical 90-conversation local load, refreshed small-load/contention checks, and real Azure/DIAL screenshot-flow approval/refusal smoke | No implementation remaining for the selected slice; repository publication/submission is a separate operator action; see report limits |
 
 **All four stages are implemented and validated for the selected assignment slice.** Confirmed details can be submitted
 for a single offered space, held in SQLite, and approved or refused by a human in
@@ -135,6 +135,7 @@ START → reservation_collection
   information turn → context_augmentation → parking_assitant → END
   incomplete request mentioning availability/reservation → context_augmentation → parking_assitant → END
   collection reply → parking_assitant → END
+  successful confirmation → context_augmentation (recheck existing options) → parking_assitant → END
   successful /submit → parking_assitant (pending reply) → administrator_agent
     → administrator_review (Studio interrupt)
       approved → record_approved_reservation → parking_assitant (approval + recording outcome) → END
@@ -304,7 +305,13 @@ an empty database. Retrieved records appear as `availability_options`, distinct 
 ordinary static directions evidence. Offered IDs are retained in thread state, not
 public graph input/output, and do not write or hold any space. Initial incomplete
 reservation requests can display options alongside deterministic collection replies;
-confirmation summaries and control commands retain their existing behavior.
+collection preserves those choices and their code-owned descriptive query. A selected
+space ID (including an `L1-`/`L2-` prefix) is not a new descriptive preference or a vehicle identifier.
+After confirmation, Python automatically reloads/rechecks the existing choices and
+retains eligible IDs in their original order. Only removed choices are replaced using
+the existing public preference query; the reply identifies options that are no longer
+eligible. If no options were shown before collection, confirmation retrieves them automatically.
+There is no mandatory second `/options` search.
 
 **Other options.** A follow-up such as "Show me other options", "Any different spots?"
 or "More spaces" excludes every space already offered in the current offer round,
@@ -322,8 +329,11 @@ overlapping pending/approved holds before ranking; otherwise it excludes only ho
 active now and labels the evidence `current_observations`. Evidence carries the preview
 UTC period and `eligibility_scope`, not
 private ledger fields. `/options` explicitly requests suggestions using a code-owned
-availability query. Offers are bound to `offer_duration_hours`; changing duration
-invalidates them. Passing time alone does not invalidate confirmation or offers:
+availability query. `/options` is optional and rechecks the same current choices;
+"other options" deliberately requests a different set. Offers are bound to
+`offer_duration_hours`; changing duration invalidates that binding and personal
+confirmation, but preserves browse candidates/preferences. Fresh confirmation
+automatically rechecks them for the new duration. Passing time alone does not invalidate confirmation or offers:
 submission computes and atomically rechecks its own actual period.
 
 JSON evidence is appended only to a copy of the latest user message for the model.
@@ -420,7 +430,12 @@ Example synthetic message:
 I want to reserve for 2 hours.”
 
 Python validates proposed verbatim field values and renders a revisioned summary.
-Substring checks do not prove correct semantic extraction; the user reviews the summary.
+Occurrence-aware checks reject negated values and code-tracked space references/fragments
+as vehicle updates. An explicitly labeled vehicle identifier may legitimately match a
+space ID; there is no plate-format restriction. Structured extraction also proposes
+verbatim field-rejection evidence or a vague-disagreement phrase, independently checked
+by Python. Bounded English safeguards catch common rejection wording even if the model
+omits it. These checks are not universal semantic understanding; review the summary.
 `ValidatedReservationRequest` contains names, vehicle identifier, and numeric duration,
 not a provisional start/end. `SubmittedReservationRequest` adds the canonical UTC period
 inside the hold transaction. Thus time spent collecting details or choosing options
@@ -438,19 +453,29 @@ summary without creating a hold or implicitly confirming/submitting anything.
 | --- | --- |
 | `/confirm N` | Confirm displayed revision N |
 | `yes`, `yes.`, `confirm`, `I confirm` | Confirm only immediately after the matching summary |
-| `no`, `no.` | Decline details confirmation |
-| A natural-language correction | Propose changes and validate/show a new summary |
+| `no`, `no.` or “Those details are wrong” | Invalidate confirmation and ask which detail needs correction; `yes` cannot bypass unresolved disagreement |
+| A natural-language replacement | Validate the positive replacement and show a new summary requiring fresh confirmation |
+| “My vehicle id isn't OUT-P01” | Clear the rejected vehicle field, keep other details/options, and ask for the correct identifier |
 | `/clear FIELD` | Remove `first_name`, `surname`, `car_number`, or `duration_hours` |
 | `/cancel` | Clear the draft/confirmation, not chat history |
 | `/new` | Start a new empty draft |
 | `/clear-budget` | Clear the optional price preference and invalidate old offers; not the personal draft |
-| `/options` | Show up to three semantic suggestions for a now-based duration preview; overlapping holds are excluded |
+| `/options` | Optional: recheck/show current choices for a now-based duration preview; eligible choices retain order |
+| “Other options” | Deliberately retrieve different eligible choices, excluding all IDs already shown in the round |
 | `/submit SPACE_ID` | Submit one currently offered space for the confirmed duration, starting its pending hold now before administrator review |
 | `/retry-recording` | Retry file recording for the current human-approved failed/unconfirmed request, before `/new`; does not repeat approval or shift the period |
 
 States: `idle`, `collecting`, `awaiting_confirmation`, `ready`, `cancelled`.
 Changes and rejected/unreadable updates invalidate confirmation. `ready` is collected,
 user-confirmed information only. General information turns still use RAG while collecting.
+Vague disagreement uses internal `correction_pending`; it preserves the personal draft
+but blocks confirmation/submission until a concrete correction or field clear. Named
+rejections clear only that field, and replacement-in-the-same-message uses only the
+positive occurrence. Required missing fields always block submission. Previously collected
+values remain in private filtering history; correction is not chat/checkpoint deletion.
+Automatic revalidation failure leaves confirmed personal details but no eligible offered
+IDs/duration binding; it reports an error, never submits stale choices. Retry the failed
+run or use optional `/options` after restoring storage/provider availability.
 Current commands/revisions/duration rules describe implemented behavior, not additional
 assignment requirements that cannot be reconsidered during refactoring.
 
@@ -465,10 +490,11 @@ ledger; old submitted checkpoints cannot resurrect a missing request. Chroma is 
 
 1. Start the server as above and use **Chat** mode to collect the required fields
    and confirm the displayed revision with `/confirm N`.
-2. Send `/options`. Select **one of the IDs actually offered** using `/submit SPACE_ID`
+2. Use the automatically rechecked options. Select **one of the IDs actually offered** using `/submit SPACE_ID`
    (for example, `/submit G-A01` only if that ID appears). Python rechecks eligibility
    and creates the pending hold before escalation. A conflict refreshes the options;
-   choose again. Suggestions and confirmation alone never create holds.
+   choose again. `/options` is optional; "other options" requests alternatives.
+   Suggestions and confirmation alone never create holds.
 3. The chatbot reports **pending** and the graph pauses at `administrator_review`.
    The human administrator switches the **same thread to Graph mode**, opens the
    interrupt, and reviews the request fields, space, and UTC period. This is the
@@ -781,6 +807,21 @@ Ruff lint/format and ty checks passed. No new package or provider change was mad
 the baseline requirements, real `.env`, and populated project stores were unchanged.
 See STAGE4_VALIDATION.md for the historical load evidence and its limitations.
 
+**2026-11-02 conversation fixes:** the final offline run completed **389 tests in
+329.240 seconds: 382 passed, seven opt-in live checks skipped**. It includes 27 new
+fast screenshot/edge-case regressions and a real HTTP/stdio approval/refusal check
+without a mandatory `/options` turn. The seven live component checks passed separately,
+including raw parsed space-reference and negative/vague-correction extraction. Two
+full real-provider screenshot conversations (approval/refusal) passed twice, retaining
+initial choices through correction/confirmation; approved recording used one attempt
+and refusal wrote no file. All 13 integration scenarios passed. A small six-conversation
+local load regression at concurrency five and refreshed ten-way contention check passed;
+these do not replace the historical 90-conversation benchmark or establish provider capacity.
+Ruff lint/format, ty and whitespace checks passed. Tests used disposable stores, without
+changing real `.env`, populated project data, the dependency lockfile, or baseline requirements.
+Current demo screenshots in `presentation/` are diagnostic bug evidence; replace them
+after a fresh Studio test before using them as successful presentation evidence.
+
 Run the synthetic privacy evaluation with `.venv/bin/python -m guardrail_evaluation`.
 It prints case IDs/counts, coverage metrics, and warm detector latency; no files are
 written.
@@ -849,7 +890,7 @@ server plus LangSmith Studio**, not a new cloud/container/production platform:
 2. Keep credentials/private data local and tracing disabled; connect the required VPN.
 3. Run one server against each disposable SQLite/output location. Wait for startup
    readiness before using Studio; missing/empty Chroma requires initial embeddings.
-4. Use the Studio collection → confirmation → `/options` → explicit submission →
+4. Use the Studio collection → confirmation/automatic option recheck → explicit submission →
    Graph-mode Decision/Resume flow. Inspect the approved file only after a recorded-success reply.
 5. Stop with Ctrl+C. A new lifespan deliberately resets SQLite and generated output;
    preserve nothing valuable in the dedicated recording directory. Chroma is reused.

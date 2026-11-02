@@ -1,7 +1,7 @@
 # Stage 4: system validation and load report
 
 **Outcome:** the selected four-stage workflow is integrated and validated locally.
-The measured run passed 11 end-to-end scenarios, 90 concurrent-profile conversations,
+The original measured run passed 11 end-to-end scenarios, 90 concurrent-profile conversations,
 a ten-way allocation race, and two live Azure/DIAL pipeline smoke conversations.
 This is assignment-scale evidence, **not production capacity, administrator
 authentication, complete confidentiality, or live-provider load testing**.
@@ -10,6 +10,57 @@ Run timestamps use the application machine's UTC clock: **2026-10-31 UTC**
 (2026-11-01 local time). Local validation ran 21:27:03–21:37:48 UTC; live smoke ran
 21:39:33–21:40:56 UTC. No provider, inventory fixture, reservation policy, or dependency
 was changed for this slice.
+
+## Conversation regression validation — 2026-11-02
+
+The user-approved correction retains early browsing, but removes the mandatory second
+`/options` search. Collection preserves code-owned preferences/current candidates;
+confirmation automatically rechecks eligibility and retains valid IDs/order. Removed
+choices are explained and replaced using the existing preference query. Space references,
+including fragments and `L1-`/`L2-` prefixes, are neither vehicle identifiers nor new
+location preferences. Named negative corrections clear/replace only the affected field;
+vague disagreement blocks confirmation/submission until clarified. This is bounded
+English/model extraction, not universal semantic accuracy or a new allocation policy.
+
+Final evidence uses isolated synthetic data and the original public input/review paths:
+
+| Check | Newly verified result |
+| --- | --- |
+| Full offline discovery | 389 tests in 329.240 s: 382 passed; 7 opt-in live component checks skipped |
+| Screenshot/edge regressions | 27 fast injected-extraction tests, including bad outputs, reversed/full-name negation, correction detours, stale confirmation, failed revalidation, price/overlap changes, option/exclusion continuity and async/thread isolation |
+| Full HTTP/stdio integration | 13/13 scenarios; adds screenshot-flow approval/refusal and updates duration checks to automatic revalidation |
+| Live components | 7/7 passed separately, inspecting parsed output before application safeguards/fallback |
+| Live full pipeline | Two approval/refusal screenshot conversations passed in each of two runs, with real embeddings/extraction/review and actual stdio recording |
+| Small local load regression | 6/6 conversations at concurrency 5: 3 approvals/files, 3 refusals, 3 recording attempts, zero retries/errors/overlaps; observed node concurrency 5 |
+| Refreshed contention | 10 contenders: one pending winner, nine expected conflicts; refusal released the hold; no files |
+| Source checks | Ruff lint/format, ty and `git diff --check` passed |
+
+The new screenshot scenario follows browse → refer to an offered ID plus duration →
+collect names → reject the mistaken vehicle interpretation → provide the vehicle →
+vague disagreement → blocked `yes` → surname replacement → confirmation → submit the
+original still-eligible space → approve/refuse. It does not issue `/options` or inject
+private state. The offline extractor is labeled; live runs use the real extractor.
+The raw live component checks separately verify that negation is represented as rejection,
+not a positive update, and that a space reference does not propose `car_number`.
+
+The integration run was **15:47:10–15:49:32 UTC**; before restart it had six approved
+rows/files, zero overlaps and zero recorder children. Live repeats ran
+**15:51:28–15:52:59** and **15:59:12–16:00:42 UTC** using `function_calling`,
+`gpt-6-luna-2026-09-22`, and `text-embedding-3-small-1`. Each produced exactly one
+approved file in one attempt; refusal produced none. Neither used fallback review wording;
+both had zero node errors/overlaps and zero recorder children at inspection. Final live
+dialogue median/p95 was 3.003/9.449 s (n=18); submission-to-review 2.924/3.467 s (n=2);
+resume-to-outcome 1.603/2.258 s (n=2). These are tiny-sample observations, not capacity.
+
+The small local load plus contention run was **15:59:12–16:00:53 UTC**. Its six
+conversations took 22.518 s excluding 14.006 s startup (0.266 conversations/s); dialogue
+median/p95 was 1.593/4.879 s (n=26). It is a regression probe on a shared host, **not a
+rerun/replacement of the historical 90-conversation benchmark below**. Review remains
+scripted; no fresh browser demonstration, human throughput, live-provider load,
+resource-leak certification or complete privacy/security guarantee is claimed.
+No production service, provider/dependency change, project-data reset, real `.env` edit,
+or baseline-requirement change was made. Existing presentation screenshots remain bug
+evidence until replaced after the user's Studio test.
 
 ## Reproduce
 
@@ -81,7 +132,7 @@ Each profile has 15 approvals and 15 refusals, keeping the 20-space fixture with
 capacity while retaining prior approvals. Deliberate same-space contention is
 measured separately, not counted as an unexpected system failure.
 
-## End-to-end scenarios: 11/11 passed
+## Historical end-to-end scenarios: 11/11 passed
 
 | Scenario | Checked outcome |
 | --- | --- |
@@ -107,7 +158,7 @@ Fault cases explicitly inject client-side failures. The lost-receipt case perfor
 real stdio publication/replay before dropping receipts. Those fault latencies are
 not mixed into the normal-load table.
 
-## Normal load: 90/90 conversations passed
+## Historical normal load: 90/90 conversations passed
 
 | Concurrent conversations | Completed | Approved/refused | Elapsed, excluding startup/warmup | Conversations/s | Observed simultaneous graph nodes |
 | --- | --- | --- | --- | --- | --- |
@@ -167,7 +218,7 @@ API workloads, **not proof of no descriptor/memory leaks** or a sustained soak/p
 resource measurement. Owned server processes and diagnostic handles are closed;
 recorder children were absent at inspection. Do not infer a production SLA.
 
-## Live pipeline smoke: 2/2 passed
+## Historical live pipeline smoke: 2/2 passed
 
 Real temporary Chroma seeding/retrieval, current extraction and administrator
 models, typed review, SQLite and actual stdio MCP were used, with tracing disabled:

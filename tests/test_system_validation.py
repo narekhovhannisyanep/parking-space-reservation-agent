@@ -197,6 +197,18 @@ class ServerTests(unittest.TestCase):
             self.assertTrue(runner.outcome(thread, "approved")["recorded"])
             self.assertEqual(runner.check_storage()["files"], 1)
 
+    def test_socket_screenshot_conversation_preserves_options_and_corrections(self):
+        with (
+            TemporaryDirectory(prefix="parking-stage4-") as directory,
+            ValidationServer(Path(directory)) as server,
+        ):
+            runner = ScenarioRunner(server)
+            approved = runner.screenshot_conversation("approve")
+            refused = runner.screenshot_conversation("refuse")
+            self.assertTrue(approved["recorded"])
+            self.assertFalse(refused["recorded"])
+            self.assertEqual(runner.check_storage()["files"], 1)
+
     def test_bootstrap_requires_its_own_storage_settings_before_loading_the_server(self):
         application = SimpleNamespace(
             parking_agent=Mock(config=AgentConfig()),

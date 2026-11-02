@@ -35,7 +35,9 @@ allocate capacity, hold a space, approve a request, or record a reservation. Sub
 The requested period is a now-based preview; submission recalculates its start from the server clock.
 Public snapshots alone do not confirm availability for a booking period.
 If previous_offers_excluded is present, the options exclude spaces already offered in this
-conversation; an empty list then means no further alternatives can currently be offered."""
+conversation; an empty list then means no further alternatives can currently be offered.
+no_longer_eligible contains previously offered IDs removed by this turn's eligibility/price checks;
+these are not current options. Retained options have been rechecked, not blindly reused."""
 
 # "free of charge" asks about price, not availability. Bare "parking" is not a request
 # ("Tell me about parking"), but "park" as a verb and "spot"/"place" are.
@@ -124,6 +126,12 @@ def public_retrieval_query(text: str, max_chars: int) -> str:
     return (query or "parking information")[:max_chars]
 
 
+def option_preferences(text: str, max_chars: int) -> str:
+    """Only code-owned descriptive signals, excluding hours/prices/request words."""
+    public_text = re.sub(r"\b(?:avoid|no|without)\s+stairs\b", "step-free", text[:max_chars], flags=re.IGNORECASE)
+    return " ".join(topic for topic, pattern in TOPICS[:-4] if re.search(pattern, public_text, re.IGNORECASE))
+
+
 def _latest_text_matches(pattern: str, messages: Sequence[AnyMessage], config: ContextConfig) -> bool:
     index = latest_user_index(messages)
     return index is not None and bool(
@@ -163,6 +171,8 @@ def retrieve_context(
     reservation_period: Sequence[str] = (),
     force_availability: bool = False,
     budget: HourlyBudget | None = None,
+    preferred_space_ids: Sequence[str] | None = None,
+    option_query: str | None = None,
 ) -> str:
     """Read scoped evidence every turn; no LLM routing, ingestion, or prose rewriting.
 
@@ -180,7 +190,10 @@ def retrieve_context(
     availability = force_availability or asks_availability(messages, config)
     if force_availability and "availability" not in query:
         query = "availability" if query == "parking information" else query + " availability"
+    if availability and option_query:
+        query = option_query
     excluded = set(excluded_space_ids) if availability else set()
+    removed: list[str] = []
     try:
         facts = [fact for fact in dynamic_store.list_facts(config.location_id) if fact.kind != "prices"]
         price_summary = static_store.hourly_price_summary(config.location_id) if "prices" in query else None
@@ -192,13 +205,29 @@ def retrieve_context(
                 if identifier.removeprefix(f"{config.location_id}:space:") not in excluded
                 and identifier.removeprefix(f"{config.location_id}:space:") not in unavailable_space_ids
             ]
-            documents = static_store.search(
-                query,
-                location_id=config.location_id,
-                k=min(3, config.retrieval_k),
-                eligible_ids=ids,
-                **({"filters": SpaceFilters(budget=budget)} if budget is not None else {}),
-            )
+            limit = min(3, config.retrieval_k)
+            documents = []
+            if preferred_space_ids is not None:
+                # Reload only the bounded, code-tracked options in their original order.
+                prefix = f"{config.location_id}:space:"
+                selected = [
+                    prefix + identifier for identifier in preferred_space_ids[:limit] if prefix + identifier in ids
+                ]
+                documents = static_store.get_spaces(selected, location_id=config.location_id)
+                if budget is not None:
+                    documents = [doc for doc in documents if budget.accepts(doc.metadata["hourly_price_cents"])]
+                retained = {doc.metadata["space_id"] for doc in documents}
+                removed = [identifier for identifier in preferred_space_ids[:limit] if identifier not in retained]
+            if preferred_space_ids is None or len(documents) < limit:
+                selected_ids = {doc.id for doc in documents}
+                remaining = [identifier for identifier in ids if identifier not in selected_ids]
+                documents += static_store.search(
+                    query,
+                    location_id=config.location_id,
+                    k=limit - len(documents),
+                    eligible_ids=remaining,
+                    **({"filters": SpaceFilters(budget=budget)} if budget is not None else {}),
+                )
         elif query in {"working hours", "prices", "working hours prices"}:
             documents = []
             requested = {
@@ -222,6 +251,7 @@ def retrieve_context(
         reservation_period=reservation_period,
         budget=budget,
         price_summary=price_summary,
+        no_longer_eligible=removed,
     )
 
 
@@ -236,6 +266,7 @@ def render_context(
     reservation_period: Sequence[str] = (),
     budget: HourlyBudget | None = None,
     price_summary: dict | None = None,
+    no_longer_eligible: Sequence[str] = (),
 ) -> str:
     """Render bounded, whole-record evidence for startup or a conversation turn."""
 
@@ -259,6 +290,8 @@ def render_context(
             payload["previous_offers_excluded"] = previous_offers_excluded
         if budget is not None:
             payload["hourly_budget"] = budget.model_dump(mode="json")
+        if no_longer_eligible:
+            payload["no_longer_eligible"] = list(no_longer_eligible)
     if price_summary is not None:
         guard.check_public(price_summary)
         payload["hourly_prices"] = price_summary
@@ -317,6 +350,13 @@ def priced_options_reply(context: str) -> str:
         return ""
     budget = HourlyBudget.model_validate(payload["hourly_budget"]) if "hourly_budget" in payload else None
     prefix = budget.summary() + "\n" if budget is not None else ""
+    removed = payload.get("no_longer_eligible", [])
+    if removed:
+        prefix += (
+            "Previously offered "
+            + ", ".join(removed)
+            + ": no longer eligible under current availability, duration, or price checks. Remaining choices are retained; replacements use your existing preferences.\n"
+        )
     options = payload["availability_options"]
     if not options:
         return (

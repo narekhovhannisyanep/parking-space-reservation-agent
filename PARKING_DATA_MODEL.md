@@ -88,6 +88,13 @@ before top-K ranking. No hard feature flags are modeled, and the whole inventory
 randomly sampled. Only retrieved descriptions/rates appear in `availability_options`. Non-offer retrieval
 uses `static_spaces` for directions/identity. Offered `space_id` values live in the
 thread's internal `offered_space_ids` list; suggestions never write or hold spaces.
+`offer_candidate_ids` preserves the current browse choices through collection and
+duration changes; `offer_query` contains only code-owned public-topic terms. Confirmation
+automatically rechecks candidates, keeping eligible IDs/order and filling only vacancies
+with native ranked eligible results. `/options` optionally rechecks the same choices;
+it is not required before submission. Removed IDs appear in `no_longer_eligible` evidence
+and are explained, not presented as options. No raw preference text or personal fields
+are persisted in this public-topic query.
 `offer_round_ids` accumulates every ID offered since the latest fresh request; an
 "other options" follow-up excludes them before ranking. When set, the evidence also
 carries `previous_offers_excluded` (a count, not IDs).
@@ -134,6 +141,15 @@ States are `idle`, `collecting`, `awaiting_confirmation`, `ready`, and `cancelle
 Corrections/clears invalidate confirmation, but clock progress does not. See README
 for commands and supported hour expressions. Old scheduled draft checkpoints retain
 personal fields but discard schedule/confirmation and require hours plus fresh confirmation.
+Extraction also allows `rejections` (field plus complete verbatim `phrase`) and optional
+`disagreement_phrase`, never approval/submission authority. Python independently checks
+evidence and common bounded English negative clauses. A named rejection clears its
+field; a positive same-message replacement may fill it. Negated occurrences and space
+references/fragments cannot populate the vehicle field, while explicitly labeled arbitrary
+vehicle identifiers remain allowed. Vague disagreement sets session `correction_pending`,
+clears request/confirmation/summary and requires a concrete correction or clear before
+another confirmation. These are private draft state, not SQLite/MCP data fields or
+universal semantic correctness guarantees.
 
 `ready` means user-confirmed details, **not submission or administrator approval**.
 Personal fields are not written to Chroma or public SQLite snapshots. They are
@@ -170,9 +186,10 @@ inside a database transaction. Existing identity retries must match thread, spac
 and collected details exactly; retries preserve the original period even as the clock
 advances. Completed decisions cannot be reversed.
 
-The user confirms details, asks for `/options`, and submits one offered ID with
+The user confirms details, receives automatically rechecked options, and submits one offered ID with
 `/submit SPACE_ID`. Offers preview a now-based UTC window and bind to the validated
-duration, not a fixed start. Duration changes invalidate them; delays alone do not.
+duration, not a fixed start. Duration changes invalidate confirmation/eligibility binding,
+not browse candidates; fresh confirmation automatically rechecks them. Delays alone do not.
 Pending/approved rows block overlaps using `[start, end)`;
 adjacent periods can share a space, including within the same thread. Unknown-period
 suggestions use current observations and exclude only holds active now. Before ranking,
@@ -183,7 +200,7 @@ the actual server-generated submission period, and overlapping holds. Conflicts 
 the semantic options. Time before submission does not consume the requested duration;
 waiting for administrator review after submission does count and never shifts the end.
 
-Internal graph state adds `offer_duration_hours`, `refresh_options`, `submission`,
+Internal graph state adds `offer_duration_hours`, `refresh_options`, `revalidate_options`, `submission`,
 `administrator_payload`, and `review_retry`. `submission` holds only request identity,
 space, and status; SQLite supplies canonical details on review/replay. The second
 LangChain agent generates bounded neutral review wording from the submitted request.

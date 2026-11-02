@@ -137,6 +137,9 @@ class ImmediateReservationTests(unittest.TestCase):
         self.static.search.side_effect = lambda *args, **kwargs: [
             doc for doc in documents if doc.id in kwargs.get("eligible_ids", self.ids)
         ][: kwargs["k"]]
+        self.static.get_spaces.side_effect = lambda ids, **_: [
+            doc for identifier in ids for doc in documents if doc.id == identifier
+        ]
         self.extraction = collection.ReservationExtraction()
         self.agent = ParkingSpaceReservationAgent(
             config=AgentConfig(storage=config),
@@ -195,6 +198,11 @@ class ImmediateReservationTests(unittest.TestCase):
     def test_submit_complete_but_unconfirmed_details_displays_summary_without_holding(self):
         self.fill()
         self.turn("no")
+        self.extraction = collection.ReservationExtraction(
+            intent="reservation", updates=[collection.FieldUpdate(field="surname", value="Example")]
+        )
+        self.turn("My surname is Example.")
+        self.extraction = collection.ReservationExtraction()
         reply = self.turn("/submit G-A01")["messages"][-1].content
         session = collection.ReservationSession.model_validate(self.state()["reservation"])
         assert session.request is not None

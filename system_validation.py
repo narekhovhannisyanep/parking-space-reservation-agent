@@ -737,6 +737,50 @@ class ScenarioRunner:
         )
         require(path.stat().st_mode & 0o777 == 0o600, "unsafe_recorded_permissions")
 
+    def screenshot_conversation(self, decision: str) -> dict:
+        """Browse → choose duration → correct details → confirm → submit same ID.
+
+        Uses the original public input/interrupt, no state injection or /options.
+        The offline extractor has a labeled grammar; live uses actual extraction.
+        """
+        thread, car = self.thread()
+        self.turn(thread, "Any available parking spots convenient for carrying shopping bags?")
+        initial = self.state(thread)["values"]["offered_space_ids"]
+        require(bool(initial), "screenshot_no_browse_options")
+        space = initial[0]
+        self.turn(thread, f"Let's reserve {space} for 2 hours.")
+        values = self.state(thread)["values"]
+        require(values["reservation"]["draft"]["car_number"] is None, "space_extracted_as_vehicle")
+        require(values["offered_space_ids"] == initial, "collection_changes_browse_options")
+        self.turn(thread, "First name Demo, surname Tester.")
+        self.turn(thread, f"my vehicle id isn't {space}")
+        values = self.state(thread)["values"]
+        require(values["reservation"]["draft"]["car_number"] is None, "negated_space_extracted_as_vehicle")
+        require(values["reservation"]["confirmed_revision"] is None, "negative_correction_confirms")
+        self.turn(thread, f"Car number {car}.")
+        values = self.state(thread)["values"]
+        require(values["reservation"]["status"] == "awaiting_confirmation", "screenshot_missing_summary")
+        self.turn(thread, "Those details are wrong.")
+        self.turn(thread, "yes")
+        values = self.state(thread)["values"]
+        require(values["reservation"]["status"] == "collecting", "vague_disagreement_confirms")
+        self.turn(thread, "Change surname to Example.")
+        session = self.state(thread)["values"]["reservation"]
+        require(session["draft"]["surname"] == "Example", "screenshot_correction_ignored")
+        self.turn(thread, f"/confirm {session['revision']}")
+        values = self.state(thread)["values"]
+        require(values["offered_space_ids"] == initial, "confirmation_changes_browse_options")
+        require(values["offer_duration_hours"] == 2, "screenshot_unbound_options")
+        pending = self.submit(thread, space)
+        require(pending["value"]["request"]["car_number"] == car, "screenshot_wrong_canonical_vehicle")
+        self.resume(thread, {"decision": decision})
+        outcome = self.outcome(thread, "approved" if decision == "approve" else "refused")
+        return {
+            "case": "screenshot_continuity_corrections_" + decision,
+            **outcome,
+            "review_wording_fallback": pending["value"]["message"] == FALLBACK_WORDING,
+        }
+
     def conversation(self, name: str, decision: str, *, detailed: bool = False) -> dict:
         require(decision in {"approve", "refuse"}, "invalid_scripted_decision")
         started = time.monotonic()
@@ -809,6 +853,8 @@ def integration_validation() -> dict:
             cases = [
                 runner.conversation("rag_multiturn_invalid_review_approve", "approve", detailed=True),
                 runner.conversation("refusal", "refuse"),
+                runner.screenshot_conversation("approve"),
+                runner.screenshot_conversation("refuse"),
             ]
 
             # Public CRUD and current-turn evidence, not an invented facility/pricing model.
@@ -821,19 +867,22 @@ def integration_validation() -> dict:
             dynamic.delete_fact("demo-central", "working_hours")
             cases.append({"case": "current_public_facts", "passed": True})
 
-            # Offers bind to hours, not stale preview times, and changing hours invalidates them.
+            # Changing hours invalidates eligibility; confirmation automatically rechecks
+            # the same candidates rather than forcing another /options command.
             thread = runner.prepare()
             stale = runner.options(thread)[0]
             runner.turn(thread, "Change duration to 3 hours.")
             session = runner.state(thread)["values"]["reservation"]
-            runner.turn(thread, f"/confirm {session['revision']}")
             runner.turn(thread, f"/submit {stale}")
             require(not runner.state(thread)["values"].get("submission"), "stale_offer_submitted")
-            chosen = runner.options(thread)[0]
+            runner.turn(thread, f"/confirm {session['revision']}")
+            values = runner.state(thread)["values"]
+            require(values["offer_duration_hours"] == 3, "duration_not_revalidated")
+            chosen = values["offered_space_ids"][0]
             runner.submit(thread, chosen)
             runner.resume(thread, {"decision": "refuse"})
             runner.outcome(thread, "refused")
-            cases.append({"case": "duration_invalidates_offer", "passed": True})
+            cases.append({"case": "duration_requires_confirmation_and_revalidation", "passed": True})
 
             for mode in ("before_write", "transport", "lost_receipt"):
                 thread = runner.prepare()
@@ -1064,8 +1113,8 @@ def live_validation() -> dict:
         with ValidationServer(Path(directory), live=True, jobs=1) as server:
             runner = ScenarioRunner(server)
             cases = [
-                runner.conversation("live_multiturn_approval", "approve", detailed=True),
-                runner.conversation("live_refusal", "refuse"),
+                runner.screenshot_conversation("approve"),
+                runner.screenshot_conversation("refuse"),
             ]
             require(not any(case["review_wording_fallback"] for case in cases), "live_administrator_fallback")
             result = {

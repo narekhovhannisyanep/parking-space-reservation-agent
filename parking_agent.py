@@ -38,6 +38,7 @@ from context_augmentation import (
     augmented_messages,
     latest_user_index,
     offered_space_ids,
+    option_preferences,
     priced_options_reply,
     render_context,
     retrieve_context,
@@ -81,11 +82,14 @@ class ParkingState(ParkingMessages):
     reservation: dict = field(default_factory=dict)
     reservation_reply: str = ""
     offered_space_ids: list[str] = field(default_factory=list)
+    offer_candidate_ids: list[str] = field(default_factory=list)
+    offer_query: str = ""
     # All IDs offered since the latest fresh availability request, for "other options".
     offer_round_ids: list[str] = field(default_factory=list)
     privacy_values: list[str] = field(default_factory=list)
     offer_duration_hours: float | None = None
     refresh_options: bool = False
+    revalidate_options: bool = False
     submission: dict = field(default_factory=dict)
     administrator_payload: dict = field(default_factory=dict)
     review_retry: bool = False
@@ -335,10 +339,19 @@ class ParkingSpaceReservationAgent:
                 "offered_space_ids": [],
                 "offer_round_ids": [],
                 "refresh_options": False,
+                "revalidate_options": False,
                 "budget_pending": state.budget_pending or budget_cue(text),
             }
         session, reply = advance_collection(
-            previous, text, proposal, self.config.context.location_id, self._clock(), state.messages
+            previous,
+            text,
+            proposal,
+            self.config.context.location_id,
+            self._clock(),
+            state.messages,
+            space_ids=list(
+                dict.fromkeys([*state.offer_round_ids, *state.offered_space_ids, *state.offer_candidate_ids])
+            ),
         )
         updates: dict = {
             "reservation": session.model_dump(mode="json"),
@@ -347,6 +360,8 @@ class ParkingSpaceReservationAgent:
             "reservation_reply": reply,
             "retrieval_context": "",
             "refresh_options": False,
+            "revalidate_options": False,
+            "offer_candidate_ids": state.offer_candidate_ids or state.offered_space_ids,
             "privacy_values": list(
                 dict.fromkeys(
                     [
@@ -360,18 +375,25 @@ class ParkingSpaceReservationAgent:
                 )
             ),
         }
-        if text.strip().lower() in {"/cancel", "/new"} or previous.draft.duration_hours != session.draft.duration_hours:
-            updates["offered_space_ids"] = []
-            updates["offer_round_ids"] = []
+        if previous.draft.duration_hours != session.draft.duration_hours:
             updates["offer_duration_hours"] = None
         if text.strip().lower() in {"/cancel", "/new"}:
-            updates.update(budget={}, budget_pending=False)
+            updates.update(
+                budget={},
+                budget_pending=False,
+                offered_space_ids=[],
+                offer_candidate_ids=[],
+                offer_round_ids=[],
+                offer_duration_hours=None,
+                offer_query="",
+            )
             return updates
         if clears_budget(text):
             updates.update(
                 budget={},
                 budget_pending=False,
                 offered_space_ids=[],
+                offer_candidate_ids=[],
                 offer_round_ids=[],
                 offer_duration_hours=None,
                 reservation_reply="Hourly price filter cleared. Send /options for new suggestions.",
@@ -383,6 +405,7 @@ class ParkingSpaceReservationAgent:
             updates.update(
                 budget_pending=True,
                 offered_space_ids=[],
+                offer_candidate_ids=[],
                 offer_round_ids=[],
                 offer_duration_hours=None,
                 reservation_reply=BUDGET_CLARIFICATION,
@@ -393,11 +416,19 @@ class ParkingSpaceReservationAgent:
             changed = state.budget != budget.model_dump(mode="json") or state.budget_pending
             updates.update(budget=budget.model_dump(mode="json"), budget_pending=False)
             if changed:
-                updates.update(offered_space_ids=[], offer_round_ids=[], offer_duration_hours=None)
+                updates.update(
+                    offered_space_ids=[], offer_candidate_ids=[], offer_round_ids=[], offer_duration_hours=None
+                )
             if session.status != "awaiting_confirmation" or not reply:
                 updates["refresh_options"] = True
         elif state.budget_pending:
             updates.update(reservation_reply=BUDGET_CLARIFICATION, refresh_options=False)
+        if session.status == "ready" and previous.status != "ready" and not updates["budget_pending"]:
+            # Confirmation changes only private draft state; fresh option evidence
+            # must succeed before any old IDs can be submitted for the current hours.
+            updates.update(
+                refresh_options=True, revalidate_options=True, offered_space_ids=[], offer_duration_hours=None
+            )
         return updates
 
     @staticmethod
@@ -516,6 +547,7 @@ class ParkingSpaceReservationAgent:
                 ),
                 "retrieval_context": "",
                 "refresh_options": True,
+                "revalidate_options": True,
             }
         if not re.match(r"^/submit(?:\s|$)", command, flags=re.IGNORECASE):
             return None
@@ -644,9 +676,26 @@ class ParkingSpaceReservationAgent:
             and self._reservation_session(state).status in {"collecting", "ready"}
             and not state.submission
             and asks_availability(state.messages, self.config.context)
+            and (
+                not state.offer_candidate_ids
+                or asks_other_options(state.messages, self.config.context)
+                or self._new_option_preferences(state)
+            )
         ):
             return "context_augmentation"
         return "parking_assitant" if state.reservation_reply else "context_augmentation"
+
+    def _new_option_preferences(self, state: ParkingState) -> bool:
+        preferences = self._option_preferences(state)
+        return bool(preferences and preferences + " availability" != state.offer_query)
+
+    def _option_preferences(self, state: ParkingState) -> str:
+        text = self._collection_input(state)
+        # Known IDs refer to existing choices, not new level/location signals.
+        # In particular L1-/L2- prefixes must not restart a semantic search.
+        for identifier in {*state.offer_round_ids, *state.offer_candidate_ids, *state.offered_space_ids}:
+            text = re.sub(r"(?<![\w-])" + re.escape(identifier) + r"(?![\w-])", " ", text, flags=re.IGNORECASE)
+        return option_preferences(text, self.config.context.max_query_chars)
 
     def _collection_response(self, state: ParkingState) -> dict:
         reply = state.reservation_reply
@@ -669,12 +718,22 @@ class ParkingSpaceReservationAgent:
     def _context_augmentation(self, state: ParkingState) -> dict:
         # Exclusions come only from code-tracked offers, never from model replies.
         follow_up = asks_other_options(state.messages, self.config.context)
-        previous = state.offer_round_ids if follow_up else []
+        candidates = state.offer_candidate_ids or state.offered_space_ids
+        reuse = state.revalidate_options and not follow_up
+        previous = (
+            [identifier for identifier in state.offer_round_ids if identifier not in candidates]
+            if reuse
+            else state.offer_round_ids
+            if follow_up
+            else []
+        )
         try:
             request = self._reservation_session(state).request
             start, end = duration_period(request.duration_hours, self._clock()) if request else (None, None)
             period = [start.isoformat(), end.isoformat()] if start is not None and end is not None else []
             availability = state.refresh_options or asks_availability(state.messages, self.config.context)
+            preferences = self._option_preferences(state)
+            query = preferences + " availability" if preferences else state.offer_query or "availability"
             blocked = (
                 self.reservation_store.blocked_spaces(
                     self.config.context.location_id,
@@ -696,6 +755,8 @@ class ParkingSpaceReservationAgent:
                 reservation_period=period,
                 force_availability=state.refresh_options,
                 budget=HourlyBudget.model_validate(state.budget) if state.budget else None,
+                preferred_space_ids=candidates if reuse else None,
+                option_query=query if availability else None,
             )
         except GuardrailError:
             return self._guardrail_failure(state)
@@ -703,11 +764,14 @@ class ParkingSpaceReservationAgent:
             raise RuntimeError(
                 "Unable to retrieve parking information. Check storage configuration or retry."
             ) from None
-        updates: dict = {"retrieval_context": context, "refresh_options": False}
+        updates: dict = {"retrieval_context": context, "refresh_options": False, "revalidate_options": False}
         options = offered_space_ids(context)
         if options is not None:
             updates["offered_space_ids"] = options
-            updates["offer_round_ids"] = list(dict.fromkeys([*previous, *options]))
+            updates["offer_candidate_ids"] = options
+            updates["offer_query"] = query
+            history = state.offer_round_ids if reuse else previous
+            updates["offer_round_ids"] = list(dict.fromkeys([*history, *options]))
             # A preview starts now, but does not fix submission's start or expire
             # merely because the conversation takes time. Hold rechecks its own period.
             updates["offer_duration_hours"] = request.duration_hours if request else None

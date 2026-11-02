@@ -311,7 +311,8 @@ class GraphCollectionTests(unittest.IsolatedAsyncioTestCase):
         session = self.session()
         self.assertEqual(session.status, "ready")
         self.assertEqual(session.confirmed_revision, session.revision)
-        self.assertEqual(result["messages"][-1].content, READY_REPLY)
+        self.assertTrue(result["messages"][-1].text.startswith(READY_REPLY))
+        self.assertIn("No eligible parking options", result["messages"][-1].text)
         self.assertNotIn("approved", session.model_dump())
         self.assertEqual(self.extractor.invoke.call_count, 1)
         self.static.upsert_documents.assert_not_called()
@@ -378,12 +379,14 @@ class GraphCollectionTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.session().status, "awaiting_confirmation")
         self.assertIsNone(self.session().confirmed_revision)
 
-    def test_no_rejects_confirmation_and_requires_a_new_summary(self):
+    def test_no_rejects_confirmation_and_requires_a_specific_correction(self):
         self.fill()
         self.turn("no")
         self.assertEqual(self.session().status, "collecting")
         self.assertIsNone(self.session().summary_message_id)
         self.turn("yes")
+        self.assertEqual(self.session().status, "collecting")
+        self.turn("Surname Jones", proposal(surname="Jones"))
         self.assertEqual(self.session().status, "awaiting_confirmation")
 
     def test_same_turn_yes_and_stale_command_on_ready_do_not_confirm_another_revision(self):
@@ -396,13 +399,17 @@ class GraphCollectionTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("does not match", result["messages"][-1].content)
         self.assertEqual(self.session(), before)
 
-    def test_storage_outage_does_not_block_collection_or_confirmation(self):
+    def test_storage_outage_preserves_collected_confirmation_but_blocks_option_eligibility(self):
         self.static.search.side_effect = OSError("private path")
         self.dynamic.list_facts.side_effect = OSError("private path")
         self.fill()
-        self.confirm()
+        with self.assertRaisesRegex(RuntimeError, "Unable to retrieve"):
+            self.confirm()
         self.assertEqual(self.session().status, "ready")
         self.static.search.assert_not_called()
+        state = self.agent.graph.get_state(self.config).values
+        self.assertFalse(state["offered_space_ids"])
+        self.assertIsNone(state["offer_duration_hours"])
 
     def test_trusted_location_change_invalidates_confirmation(self):
         self.fill()
@@ -476,7 +483,7 @@ class GraphCollectionTests(unittest.IsolatedAsyncioTestCase):
         assert session.request is not None
         self.now += timedelta(days=10)
         result = self.confirm()
-        self.assertEqual(result["messages"][-1].content, READY_REPLY)
+        self.assertTrue(result["messages"][-1].text.startswith(READY_REPLY))
         self.assertEqual(self.session().status, "ready")
         self.assertEqual(self.session().request, session.request)
         self.assertEqual(self.session().draft_id, session.draft_id)

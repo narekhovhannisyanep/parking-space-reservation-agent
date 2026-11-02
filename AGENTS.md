@@ -153,7 +153,21 @@ as code are extra-credit artifacts; see the baseline for details.
   errors/SDK exception groups are sanitized; genuine programming errors/cancellation
   propagate. This is trusted-local protection, not a sandbox, separate human authentication,
   or confidentiality from the trusted account/root/Studio/debug APIs.
-- **Stage 2 submission/holds:** confirm details, request `/options`, then select one
+- **Conversation continuity/corrections (user-approved correction):** early browsing is
+  allowed. Do not force `/options` after collection or silently replace useful choices.
+  Preserve current browse candidates and code-owned descriptive preferences; confirmation
+  automatically rechecks current inventory/prices/public overrides/period overlap,
+  retains eligible IDs/order, and explains/fills necessary removals. `/options` optionally
+  rechecks the same choices; "other options" deliberately searches alternatives. Keep
+  all earlier IDs in the offer round, even when temporarily removed by eligibility.
+  Duration changes invalidate confirmation/offer binding, not browse context. Space
+  references/fragments and negated values must not become vehicle identifiers; explicitly
+  labeled arbitrary vehicle identifiers may match a space ID. Named incorrect fields are
+  cleared or replaced; vague disagreement clears confirmation and asks which detail needs
+  correction, preserving draft fields and blocking `yes`/submission until clarified.
+  Corrections remain unavailable after submission; bounded English checks and model
+  extraction do not guarantee universal semantic correctness.
+- **Stage 2 submission/holds:** confirm details, automatically recheck options, then select one
   currently offered ID with `/submit SPACE_ID`. Python atomically rechecks public
   overrides and period overlap and inserts a pending SQLite hold before review.
   Offers never hold spaces. Half-open UTC periods `[start, end)` allow adjacent bookings;
@@ -265,7 +279,8 @@ as code are extra-credit artifacts; see the baseline for details.
   or guarantee availability for a booking period. Stage 2 separately reads blocked IDs
   from the private ledger before ranking for a now-based preview of the validated
   duration; unknown durations use current observations and exclude only active-now holds.
-  `offer_duration_hours` binds offered IDs to duration; duration changes invalidate offers.
+  `offer_duration_hours` binds offered IDs to duration; duration changes invalidate that
+  binding/confirmation but preserve browse candidates/public preferences until rechecked.
   Passing time alone does not invalidate confirmation/offers; submission rechecks overlap.
 - Draft collection, field validation, and user confirmation are implemented.
   `ValidatedReservationRequest` means collected details, not a submission or approval.
@@ -275,6 +290,12 @@ as code are extra-credit artifacts; see the baseline for details.
   missing-field prompts; complete unconfirmed details show a confirmation summary.
   Legacy draft checkpoints discard schedule/confirmation, preserve personal fields, and
   require duration plus fresh confirmation. See README for behavior.
+  `ReservationExtraction` also proposes grounded `rejections` and `disagreement_phrase`;
+  Python checks common English negative clauses independently, rejects space/negated
+  field proposals, and owns field clearing and unresolved `correction_pending`. The
+  graph retains `offer_candidate_ids`/code-only `offer_query` and revalidates on confirmation.
+  Known option IDs are masked before preference matching so `L1-`/`L2-` do not become
+  new level preferences. Failed automatic revalidation leaves no submittable stale IDs/binding.
 - Private `storage/reservations.py` owns `parking_reservations` in the same SQLite
   database/lifecycle as public facts, but public CRUD/RAG never return its personal
   fields. Statuses are pending/approved/refused/elapsed. Stable `draft_id:revision`
@@ -392,10 +413,15 @@ as code are extra-credit artifacts; see the baseline for details.
   approval/recording check. Ruff lint/format and ty checks passed. The fixture/pricing
   changes are the user-approved addition above; no dependency/provider or baseline
   requirement change, real `.env` edit, or populated project-data reset was made.
+  The conversation-fix regression completed 389 tests (382 passed, seven opt-in live
+  checks skipped) in 329.240 s. All seven live components, 13 HTTP/stdio scenarios,
+  two repeated real-provider screenshot approval/refusal flows, six local conversations
+  at concurrency five, and refreshed ten-way contention passed. See STAGE4_VALIDATION.md
+  for separate historical benchmark/current regression evidence and limitations.
 
 ## Next-session handoff
 
-- **Where we stopped:** All four stages use duration-only requests → confirmation → `/options`
+- **Where we stopped:** All four stages use duration-only requests → confirmation/automatic option recheck
   → `/submit SPACE_ID` → atomic SQLite hold → second LangChain communication agent →
   decision-only typed Studio review → approved-only stdio MCP → code-controlled outcome.
   No human request-ID copying or default decision. Period starts at submission; waiting
@@ -406,6 +432,11 @@ as code are extra-credit artifacts; see the baseline for details.
   trusted-local deployment and repository links; STAGE4_VALIDATION.md documents the
   completed integration/local-load/live-smoke slice. Detailed mock descriptions,
   fixed USD/hour metadata and optional persistent budgets are now implemented.
+  Screenshot-discovered regressions in option continuity, space-versus-vehicle extraction,
+  and negative/vague corrections have been fixed; `/options` is now optional. The
+  requested dark English PowerPoint (~12–14 slides/10 minutes, author Narek Hovhannisyan)
+  awaits replacement demo screenshots in `presentation/` after the user's fresh Studio test.
+  Preserve the existing bug screenshots as diagnostic evidence, not successful demo evidence.
   For the earlier demo, the operator must select `parking_spaces_v3` in the real
   `.env` and seed the new collection explicitly or at startup as documented in README;
   real `.env` and populated project data have not been changed automatically.
