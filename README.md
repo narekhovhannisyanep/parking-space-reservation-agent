@@ -127,7 +127,7 @@ add a separate public API or UI. Startup waits for both databases and baseline e
 | `system_validation.py`, `STAGE4_VALIDATION.md` | Isolated full-system HTTP/stdio scenarios, local load, opt-in live pipeline smoke and measured report |
 | `storage/` | Chroma static inventory, SQLite dynamic facts, configuration, and explicit seeding |
 | `tests/` | Offline storage, graph, collection, and opt-in live-model checks |
-| `presentation/` | User-approved PowerPoint screenshots of the reservation workflow and graph |
+| `presentation/` | PowerPoint, speaker notes, layout previews, rebuild tooling, and user-approved screenshots |
 
 Current graph:
 
@@ -913,9 +913,14 @@ lazy-storage-export fix that avoids loading Chroma/provider clients in the recor
 ## Presentation materials
 
 The PowerPoint is an extra-credit artifact explaining how the solution works, with
-relevant screenshots. The agreed deck is in English with a dark theme, approximately
-12–14 slides for 10 minutes, authored by Narek Hovhannisyan; the PowerPoint file remains
-to be created.
+relevant screenshots. The completed deck is in English with a dark theme, **14 widescreen
+slides for an approximately 10-minute talk**, authored by Narek Hovhannisyan.
+
+- [PowerPoint](presentation/Parking_Space_Reservation_Agent.pptx): editable slide text/diagrams,
+  embedded screenshots, and presenter notes with suggested timings and source references.
+- [Speaker notes](presentation/SPEAKER_NOTES.md): the same talking points in Markdown.
+- [Slide overview](presentation/previews/contact-sheet.png): a visual layout preview.
+- [Presentation guide](presentation/README.md): coverage, validation limits, and rebuild/test commands.
 
 The user removed the bug-related screenshots after the issues were solved and confirmed
 that **all current screenshots in [presentation/](presentation/) may be used in the
@@ -924,6 +929,13 @@ approval with a recording-success reply, refusal, and the LangGraph diagram. The
 presentation materials, not diagnostic bug evidence, and do not need replacement on
 that basis. Screenshot availability does not change the separately documented test
 results or validation limits.
+
+The user approved `python-pptx` and Pillow as isolated presentation tools. They are pinned
+in the builder's script metadata, not added to the application's dependencies or lockfile.
+Ten presentation-specific checks passed for slide/notes counts, timing, screenshot
+preservation, package relationships, layout bounds/overlap, and content. Layout previews
+were visually reviewed; **PowerPoint/LibreOffice engine rendering was not verified**.
+No application code, real `.env`, or project databases were changed to create the deck.
 
 ## Selected deployment and handoff
 

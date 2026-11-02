@@ -233,6 +233,10 @@ as code are extra-credit artifacts; see the baseline for details.
   a small real Azure/DIAL pipeline smoke slice, not measured live-provider load capacity.
   Scripted review responses use the existing typed interrupt; Studio remains the human
   channel. Do not claim human throughput, fresh browser validation, or production readiness.
+- **Presentation tooling (user-approved):** `python-pptx` 1.0.2 and Pillow 13.0.0 are
+  isolated presentation tools, pinned in `presentation/build_presentation.py` script
+  metadata. Do not add them to the application's dependencies/lockfile or load the
+  application, real `.env`, or project databases to build the presentation.
 
 ## Current implementation, not additional requirements
 
@@ -456,7 +460,13 @@ as code are extra-credit artifacts; see the baseline for details.
   Screenshot-discovered regressions in option continuity, space-versus-vehicle extraction,
   and negative/vague corrections have been fixed; `/options` is now optional. The
   requested dark English PowerPoint (~12–14 slides/10 minutes, author Narek Hovhannisyan)
-  remains to be created. The user removed the bug-related screenshots after the issues
+  is now created at `presentation/Parking_Space_Reservation_Agent.pptx`: 14 editable
+  widescreen slides with embedded speaker notes/timings, all seven approved screenshot
+  assets, architecture, four-stage flow, demo, safeguards and dated evaluation evidence.
+  `presentation/README.md` documents rebuild/testing; Markdown notes and Pillow layout
+  previews are included. Ten artifact checks passed and layout previews were visually
+  reviewed; PowerPoint/LibreOffice engine rendering was not verified. The user removed
+  the bug-related screenshots after the issues
   were solved and confirmed that all current screenshots in `presentation/` are
   presentation assets approved for use in the PowerPoint. Do not label them diagnostic
   bug evidence or require replacement screenshots. This asset status does not change

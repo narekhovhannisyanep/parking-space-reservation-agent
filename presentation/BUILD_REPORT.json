@@ -1,0 +1,28 @@
+{
+  "artifact": "Parking_Space_Reservation_Agent.pptx",
+  "author": "Narek Hovhannisyan",
+  "planned_seconds": 600,
+  "slide_count": 14,
+  "source_sha256": {
+    "interrupting-for-admin-review.png": "ff09524e8031f93e7cf5b0e38a102dd9a5d3788208011fc0f6b0d1ae650f7a2b",
+    "confirming-user-info-question.png": "b667eb99db3be9dbd362a4b63294edcc6f49165fa9689b66b8f7d17dc95468b6",
+    "inital-question.png": "5aa03e3e8beb063c5cdcac45492feab36de3c731785b3c7afb3d93ea1afdefa1",
+    "agent-diagram.png": "30f771b06ff97508a86f2ca7848f1e799f74e5f1a46a333661e6dac447952603",
+    "confirming-user-info-answer.png": "f337fdb51cfa4def155fa96929baf6f2608b5286c4f80b148740dde3d2e5c44c",
+    "admin-refuse.png": "baf3a9056b1b9e39156c14c761fb834f36a6f5a30b14b8aa1f5878f199a82c7d",
+    "admin-approved.png": "af8304be334d2ff25612f50f99ecc3431ee7b9dc968799f4a6f89d32157b77f8"
+  },
+  "package_checks": {
+    "slides": 14,
+    "notes": 14,
+    "xml_parts": 93,
+    "relationships": 114
+  },
+  "tools": {
+    "python-pptx": "1.0.2",
+    "Pillow": "13.0.0"
+  },
+  "preview_method": "Pillow layout mirror; not a PowerPoint/LibreOffice render",
+  "office_engine_render_verified": false,
+  "application_dependencies_changed": false
+}
