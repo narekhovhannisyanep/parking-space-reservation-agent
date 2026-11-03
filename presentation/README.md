@@ -14,6 +14,19 @@
 - A clickable project-repository link is on the final slide. The link comes from the
   project README; publication/accessibility of the current local changes was not verified.
 
+## Demo video
+
+**[Watch or download demo.mp4](demo.mp4)**
+
+The user-provided demo recording is available alongside the PowerPoint. Open the link
+or download the MP4 and play it locally if your viewer does not support playback.
+Viewing the recording does not require Python, provider credentials, or a running
+application server. The video is a separate presentation asset, not embedded in the deck.
+For reproducing the workflow, see the main README's [Studio demo instructions](../README.md#demo-in-studio).
+
+Adding the recording does not change the separately documented evaluation results
+or validation limits.
+
 ## Slide coverage
 
 | Slides | Topic |

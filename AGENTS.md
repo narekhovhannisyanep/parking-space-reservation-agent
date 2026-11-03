@@ -470,7 +470,9 @@ as code are extra-credit artifacts; see the baseline for details.
   were solved and confirmed that all current screenshots in `presentation/` are
   presentation assets approved for use in the PowerPoint. Do not label them diagnostic
   bug evidence or require replacement screenshots. This asset status does not change
-  the documented test results or validation limits.
+  the documented test results or validation limits. The user also added the separate
+  demo recording `presentation/demo.mp4`; both READMEs link it with local playback
+  guidance. It is not embedded in the PowerPoint and does not change evaluation evidence.
   For the earlier demo, the operator must select `parking_spaces_v3` in the real
   `.env` and seed the new collection explicitly or at startup as documented in README;
   real `.env` and populated project data have not been changed automatically.

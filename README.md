@@ -127,7 +127,7 @@ add a separate public API or UI. Startup waits for both databases and baseline e
 | `system_validation.py`, `STAGE4_VALIDATION.md` | Isolated full-system HTTP/stdio scenarios, local load, opt-in live pipeline smoke and measured report |
 | `storage/` | Chroma static inventory, SQLite dynamic facts, configuration, and explicit seeding |
 | `tests/` | Offline storage, graph, collection, and opt-in live-model checks |
-| `presentation/` | PowerPoint, speaker notes, layout previews, rebuild tooling, and user-approved screenshots |
+| `presentation/` | Demo video, PowerPoint, speaker notes, layout previews, rebuild tooling, and user-approved screenshots |
 
 Current graph:
 
@@ -508,6 +508,9 @@ ledger; old submitted checkpoints cannot resurrect a missing request. Chroma is 
 ## Stage 2: submission and human administrator review
 
 ### Demo in Studio
+
+For a recorded demo, see [demo.mp4](presentation/demo.mp4). To reproduce the workflow
+yourself, follow the steps below.
 
 1. Start the server as above and use **Chat** mode to collect the required fields
    and confirm the displayed revision with `/confirm N`.
@@ -918,6 +921,8 @@ slides for an approximately 10-minute talk**, authored by Narek Hovhannisyan.
 
 - [PowerPoint](presentation/Parking_Space_Reservation_Agent.pptx): editable slide text/diagrams,
   embedded screenshots, and presenter notes with suggested timings and source references.
+- [Demo video](presentation/demo.mp4): user-provided MP4 recording, available alongside the deck.
+  Open the link or download the file and play it locally; viewing does not require running the application.
 - [Speaker notes](presentation/SPEAKER_NOTES.md): the same talking points in Markdown.
 - [Slide overview](presentation/previews/contact-sheet.png): a visual layout preview.
 - [Presentation guide](presentation/README.md): coverage, validation limits, and rebuild/test commands.
