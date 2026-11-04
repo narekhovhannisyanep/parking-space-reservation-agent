@@ -9,7 +9,7 @@ production-grade parking platform.
 
 - [PROJECT_REQUIREMENTS.md](PROJECT_REQUIREMENTS.md): fixed original assignment baseline,
   transcribed from the user's screenshots.
-- [AGENTS.md](AGENTS.md): user intent, accepted choices, current status, and open decisions.
+- [AGENTS.md](AGENTS.md): durable project scope, behavior invariants, and contributor instructions.
 - [PARKING_DATA_MODEL.md](PARKING_DATA_MODEL.md): implemented fields and data boundaries.
 - [RAG_EVALUATION.md](RAG_EVALUATION.md): retrieval/answer/latency evaluation report.
 - [GUARDRAIL_EVALUATION.md](GUARDRAIL_EVALUATION.md): synthetic privacy-detector evaluation.
@@ -39,7 +39,7 @@ uv sync --locked --dev
 ```
 
 Stage 3 uses the official `mcp` Python SDK (locked to 2.3.0), without CLI extras,
-LangChain MCP adapters, Node.js, FastAPI, an HTTP listener, or a new API key.
+LangChain MCP adapters, Node.js, FastAPI, an HTTP listener, or a separate API key.
 The tested recording deployment is **Linux with a local POSIX filesystem**: it
 requires owner-only permissions, directory-descriptor/no-follow operations,
 atomic hard links, and symlink-resistant cleanup. Unsupported primitives fail
@@ -124,7 +124,7 @@ add a separate public API or UI. Startup waits for both databases and baseline e
 | `system_validation.py`, `STAGE4_VALIDATION.md` | Isolated full-system HTTP/stdio scenarios, local load, opt-in live pipeline smoke and measured report |
 | `storage/` | Chroma static inventory, SQLite dynamic facts, configuration, and explicit seeding |
 | `tests/` | Offline storage, graph, collection, and opt-in live-model checks |
-| `presentation/` | Demo video, PowerPoint, speaker notes, layout previews, rebuild tooling, and user-approved screenshots |
+| `presentation/` | Demo video, PowerPoint, speaker notes, layout previews, rebuild tooling, and presentation screenshots |
 
 Current graph:
 
@@ -414,8 +414,9 @@ Application code appends these entries to guarded model explanations; general mo
 prose remains prompt-grounded, not a second authority for options or prices.
 Submission rereads the selected rate under an active budget and retains the existing
 atomic SQLite overlap/public-availability recheck. Static prices are fixed reviewed
-mock data, not locked quotes or a concurrent billing system. No total estimate,
-payment processing, rate generator, new mandatory reservation field or MCP column is added.
+mock data, not locked quotes or a concurrent billing system. The budget is optional
+search state, not a required reservation field or MCP column. Total estimates,
+payment processing, and rate generation are outside the application scope.
 
 Queries also map mobility/step-free access, shopping bags/unloading, pushchairs,
 covered routes/rain, passing traffic and quick departures to fixed public terms.
@@ -428,8 +429,8 @@ The chatbot collects first name, surname, `car_number` (a user-provided vehicle
 identifier, not necessarily a plate), and **how many hours** the user wants to reserve.
 It does **not** ask for dates, start/end times, or the user's timezone. Reservations
 are immediate, not scheduled for a future date. The application server's UTC clock
-(`datetime.now(UTC)`) supplies the start when submission succeeds; there is no
-LangSmith time lookup, extra service, or new dependency.
+(`datetime.now(UTC)`) supplies the start when submission succeeds, without an external
+time lookup or separate time service.
 
 Use a positive number of hours, such as `2` or `1.5`; `hour(s)`, `hr(s)`, and `h`
 suffixes are accepted. Common English expressions such as `two hours` or `half an hour`
@@ -760,8 +761,8 @@ on generated space labels, technical numeric IDs, and currency amounts. Arbitrar
 unlabeled vehicle identifiers and unfamiliar/obfuscated PII can be missed. See
 [GUARDRAIL_EVALUATION.md](GUARDRAIL_EVALUATION.md) for results and limitations.
 
-Stage 3 adds the narrowly scoped, owner-protected approved-recording service above;
-it does not turn the trusted-local development setup into a production security platform.
+The approved-recording service is narrowly scoped and owner-protected; the application
+remains a trusted-local development setup, not a production security platform.
 
 Do not put secrets in chat. Inputs go to the configured model provider. Studio and
 checkpoints expose private draft state; public schemas containing only messages do
@@ -854,23 +855,23 @@ slides for an approximately 10-minute talk**, authored by Narek Hovhannisyan.
 
 - [PowerPoint](presentation/Parking_Space_Reservation_Agent.pptx): editable slide text/diagrams,
   embedded screenshots, and presenter notes with suggested timings and source references.
-- [Demo video](presentation/demo.mp4): user-provided MP4 recording, available alongside the deck.
+- [Demo video](presentation/demo.mp4): MP4 recording, available alongside the deck.
   Open the link or download the file and play it locally; viewing does not require running the application.
 - [Speaker notes](presentation/SPEAKER_NOTES.md): the same talking points in Markdown.
 - [Slide overview](presentation/previews/contact-sheet.png): a visual layout preview.
 - [Presentation guide](presentation/README.md): coverage, validation limits, and rebuild/test commands.
 
-The approved presentation screenshots in [presentation/](presentation/) show suggestions, confirmation,
+The presentation screenshots in [presentation/](presentation/) show suggestions, confirmation,
 administrator review, approval, refusal and the graph. The demo video is separate,
 not embedded in the deck. `python-pptx` and Pillow are isolated presentation tools
 pinned in the builder's script metadata, not application dependencies. Layout previews
 were visually reviewed; **PowerPoint/LibreOffice engine rendering was not verified**.
 Presentation materials do not change the evaluation evidence or its limits.
 
-## Selected deployment and handoff
+## Local deployment
 
 Deployment for this assignment is the **Linux/local POSIX LangGraph development
-server plus LangSmith Studio**, not a new cloud/container/production platform:
+server plus LangSmith Studio**, not a cloud/container/production platform:
 
 1. Clone the repository, install the existing lockfile, and configure `.env` as above.
 2. Keep credentials/private data local and tracing disabled; connect the required VPN.
@@ -890,9 +891,8 @@ authentication. Do not share the same SQLite between server processes.
 
 ### Assignment repository links
 
-After explicitly reviewing, committing and publishing the current changes, use this
-same project repository in each stage's answer field; four separate repositories
-are not required by the assignment:
+Use the same project repository in each stage's answer field.
+Verify that the published revision contains the intended deliverables:
 
 | Stage | Repository |
 | --- | --- |

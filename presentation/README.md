@@ -11,8 +11,8 @@
 - Presenter notes are embedded on every slide and exported to [SPEAKER_NOTES.md](SPEAKER_NOTES.md).
   Timings are suggestions; slides do not advance automatically. Use the notes as talking
   points rather than requiring a word-for-word reading.
-- A clickable project-repository link is on the final slide. The link comes from the
-  project README; publication/accessibility of the current local changes was not verified.
+- A clickable project-repository link is on the final slide. Before presenting,
+  verify repository access and that the published revision contains the intended deliverables.
 
 ## Demo video
 
@@ -80,7 +80,7 @@ The layout previews were visually reviewed, and the file was reopened with `pyth
 No PowerPoint/LibreOffice renderer is installed in the build environment, so native
 application rendering was **not independently verified**. Font substitution and rendering
 can vary by machine; an operator review in PowerPoint is advisable before presenting.
-This is not an uncompleted core assignment stage or a new system-validation claim.
+Artifact validation is separate from application and load evaluation.
 
 [BUILD_REPORT.json](BUILD_REPORT.json) records package checks, tool versions, source
 hashes and the rendering limitation.
@@ -100,6 +100,10 @@ uv run --no-project presentation/build_presentation.py
 uv run --no-project --with python-pptx==1.0.2 --with pillow==13.0.0 \
   python -m unittest discover -s presentation -p test_presentation.py -v
 ```
+
+`SPEAKER_NOTES.md` is generated from `build_presentation.py`; do not hand-edit it.
+Changes to generated presentation content require a separate presentation refresh,
+not a documentation-only cleanup.
 
 Rebuilding overwrites only the generated PowerPoint, notes, build report and named previews
 in `presentation/`; it does not alter source screenshots. Tests generate into a temporary

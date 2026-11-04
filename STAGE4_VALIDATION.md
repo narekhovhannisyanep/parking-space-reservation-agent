@@ -22,7 +22,7 @@ This evidence uses isolated synthetic data and the public input/review paths:
 | --- | --- |
 | Edge regressions | 27 fast injected-extraction tests, including bad outputs, negation, corrections, stale confirmation, failed revalidation, price/overlap changes, option continuity and async/thread isolation |
 | Full HTTP/stdio integration | 13/13 scenarios, including approval/refusal and duration revalidation |
-| Live components | 7/7 passed separately, inspecting parsed output before application safeguards/fallback |
+| Conversation-regression live components | 7/7 passed separately in this slice, inspecting parsed output before application safeguards/fallback |
 | Live full pipeline | Two approval/refusal conversations passed in each of two runs, with real embeddings/extraction/review and actual stdio recording |
 | Small local load regression | 6/6 conversations at concurrency 5: 3 approvals/files, 3 refusals, 3 recording attempts, zero retries/errors/overlaps; observed node concurrency 5 |
 | Refreshed contention | 10 contenders: one pending winner, nine expected conflicts; refusal released the hold; no files |
@@ -33,6 +33,9 @@ and personal-detail collection, correction and vague disagreement, confirmation,
 submission of the retained eligible space, and review. It does not issue `/options`
 or inject private state. The offline extractor is labeled; live runs use the real
 extractor. Live component checks include negation and space-versus-vehicle extraction.
+This seven-check slice predates the relevance-routing validation on the same date;
+the latest documented offline and nine-check live-component results are in
+[RAG_EVALUATION.md](RAG_EVALUATION.md#relevance-routing-validation-2026-11-02).
 
 The integration run was **15:47:10–15:49:32 UTC**; before restart it had six approved
 rows/files, zero overlaps and zero recorder children. Live repeats ran

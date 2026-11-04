@@ -1,9 +1,9 @@
 # Parking data model
 
-This describes implemented data and accepted choices, not additional assignment
-requirements. The fixed baseline is [PROJECT_REQUIREMENTS.md](PROJECT_REQUIREMENTS.md);
-scope and decisions are in [AGENTS.md](AGENTS.md). Implement the four stages without
-adding production-grade parking management or speculative future-proofing.
+This reference describes the implemented schemas, state, lifecycle, and data boundaries,
+not additional assignment requirements. The fixed assignment baseline is
+[PROJECT_REQUIREMENTS.md](PROJECT_REQUIREMENTS.md); durable scope and contributor
+instructions are in [AGENTS.md](AGENTS.md).
 
 ## Assumptions
 

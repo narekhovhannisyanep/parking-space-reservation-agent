@@ -115,9 +115,8 @@ Chroma ranking and its matching-record count. Rates never come from SQLite snaps
 Retrieval evaluation uses stub extraction, so this proves deterministic price enforcement
 for the tested grammar, **not real-model extraction accuracy**. A separate opt-in live
 component test verified that the model returned complete grounded budget phrases for
-strict/inclusive upper limits and a range; Python independently interpreted them. All
-five live component checks passed (existing extraction/collection/administrator checks
-plus budget extraction). This is smoke coverage, not universal free-form understanding.
+strict/inclusive upper limits and a range; Python independently interpreted them.
+This is smoke coverage, not universal free-form understanding.
 
 ### Live answers and latency
 
@@ -167,8 +166,9 @@ model graph with no storage retrieval, empty evidence and parking-scope replies.
 
 These are small synthetic smoke checks, **not universal intent accuracy**, new browser
 validation or live-provider load evidence. Relevance and answer wording remain
-model-guided; a misclassification can still select the wrong branch. Retrieval quality
-and latency tables above predate this routing correction and were not remeasured.
+model-guided; a misclassification can still select the wrong branch. The priced-inventory
+retrieval results, live-answer results, and latency measurements above predate this
+routing change and were not remeasured after it.
 
 ## Earlier Stage 1 results (2026-10-30)
 
