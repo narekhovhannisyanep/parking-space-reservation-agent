@@ -36,7 +36,7 @@ model loading, storage, embeddings, LLM calls, queuing, and complete chat latenc
 This is not an independent held-out benchmark; the corpus includes regression
 examples used while tuning narrow public-data false-positive rules.
 
-## Observed results
+## Observed results (run date not recorded)
 
 | Metric | Result |
 | --- | --- |
@@ -58,8 +58,7 @@ Tests separately verify deterministic checks for known Unicode/nonplate identifi
 overlapping spans, nested JSON keys and metadata, whole-batch rejection before
 embedding, contaminated existing evidence, extraction grounding after redaction,
 old-draft privacy after cancellation, detector/missing-model failure, and sync/async
-`messages` streaming. Existing storage/startup/collection tests remain intact apart
-from the new fixture count and intentionally sanitized model-history expectations.
+`messages` streaming.
 
 ## Boundaries and limits
 

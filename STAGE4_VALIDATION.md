@@ -6,42 +6,33 @@ a ten-way allocation race, and two live Azure/DIAL pipeline smoke conversations.
 This is assignment-scale evidence, **not production capacity, administrator
 authentication, complete confidentiality, or live-provider load testing**.
 
-Run timestamps use the application machine's UTC clock: **2026-10-31 UTC**
-(2026-11-01 local time). Local validation ran 21:27:03–21:37:48 UTC; live smoke ran
-21:39:33–21:40:56 UTC. No provider, inventory fixture, reservation policy, or dependency
-was changed for this slice.
+Run timestamps use the application machine's UTC clock. The original run was
+**2026-10-31 UTC** (2026-11-01 local time): local validation ran 21:27:03–21:37:48
+UTC; live smoke ran 21:39:33–21:40:56 UTC.
 
 ## Conversation regression validation — 2026-11-02
 
-The user-approved correction retains early browsing, but removes the mandatory second
-`/options` search. Collection preserves code-owned preferences/current candidates;
-confirmation automatically rechecks eligibility and retains valid IDs/order. Removed
-choices are explained and replaced using the existing preference query. Space references,
-including fragments and `L1-`/`L2-` prefixes, are neither vehicle identifiers nor new
-location preferences. Named negative corrections clear/replace only the affected field;
-vague disagreement blocks confirmation/submission until clarified. This is bounded
-English/model extraction, not universal semantic accuracy or a new allocation policy.
+This regression covers browse continuity, automatic option rechecking, space references,
+and named or vague corrections. These checks use bounded English/model extraction;
+they do not establish universal semantic accuracy.
 
-Final evidence uses isolated synthetic data and the original public input/review paths:
+This evidence uses isolated synthetic data and the public input/review paths:
 
-| Check | Newly verified result |
+| Check | Result |
 | --- | --- |
-| Full offline discovery | 389 tests in 329.240 s: 382 passed; 7 opt-in live component checks skipped |
-| Screenshot/edge regressions | 27 fast injected-extraction tests, including bad outputs, reversed/full-name negation, correction detours, stale confirmation, failed revalidation, price/overlap changes, option/exclusion continuity and async/thread isolation |
-| Full HTTP/stdio integration | 13/13 scenarios; adds screenshot-flow approval/refusal and updates duration checks to automatic revalidation |
+| Edge regressions | 27 fast injected-extraction tests, including bad outputs, negation, corrections, stale confirmation, failed revalidation, price/overlap changes, option continuity and async/thread isolation |
+| Full HTTP/stdio integration | 13/13 scenarios, including approval/refusal and duration revalidation |
 | Live components | 7/7 passed separately, inspecting parsed output before application safeguards/fallback |
-| Live full pipeline | Two approval/refusal screenshot conversations passed in each of two runs, with real embeddings/extraction/review and actual stdio recording |
+| Live full pipeline | Two approval/refusal conversations passed in each of two runs, with real embeddings/extraction/review and actual stdio recording |
 | Small local load regression | 6/6 conversations at concurrency 5: 3 approvals/files, 3 refusals, 3 recording attempts, zero retries/errors/overlaps; observed node concurrency 5 |
 | Refreshed contention | 10 contenders: one pending winner, nine expected conflicts; refusal released the hold; no files |
 | Source checks | Ruff lint/format, ty and `git diff --check` passed |
 
-The new screenshot scenario follows browse → refer to an offered ID plus duration →
-collect names → reject the mistaken vehicle interpretation → provide the vehicle →
-vague disagreement → blocked `yes` → surname replacement → confirmation → submit the
-original still-eligible space → approve/refuse. It does not issue `/options` or inject
-private state. The offline extractor is labeled; live runs use the real extractor.
-The raw live component checks separately verify that negation is represented as rejection,
-not a positive update, and that a space reference does not propose `car_number`.
+The approval/refusal scenario covers browsing, an offered space reference, duration
+and personal-detail collection, correction and vague disagreement, confirmation,
+submission of the retained eligible space, and review. It does not issue `/options`
+or inject private state. The offline extractor is labeled; live runs use the real
+extractor. Live component checks include negation and space-versus-vehicle extraction.
 
 The integration run was **15:47:10–15:49:32 UTC**; before restart it had six approved
 rows/files, zero overlaps and zero recorder children. Live repeats ran
@@ -58,11 +49,6 @@ median/p95 was 1.593/4.879 s (n=26). It is a regression probe on a shared host, 
 rerun/replacement of the historical 90-conversation benchmark below**. Review remains
 scripted; no fresh browser demonstration, human throughput, live-provider load,
 resource-leak certification or complete privacy/security guarantee is claimed.
-No production service, provider/dependency change, project-data reset, real `.env` edit,
-or baseline-requirement change was made. The user subsequently removed the bug-related
-screenshots after the issues were solved and confirmed that all current screenshots in
-`presentation/` are presentation assets approved for PowerPoint use. This asset update
-does not add test runs or change the validation evidence and limits above.
 
 ## Reproduce
 
@@ -125,22 +111,22 @@ concurrent orchestration and real local privacy/storage work, **not real-model
 quality, embeddings performance, or provider capacity**. Live smoke uses the real
 configured models/embeddings, not those stubs or the 20 ms delay.
 
-Each load conversation performs information dialogue, collection, code confirmation,
-options, explicit submission, typed review, and approval/recording or refusal. Turns
-within a thread are sequential; different threads run concurrently. Test choices
-come only from currently offered IDs. More-option turns find distinct choices for
-each batch; they do not create holds or bypass the real atomic submission check.
-Each profile has 15 approvals and 15 refusals, keeping the 20-space fixture within
-capacity while retaining prior approvals. Deliberate same-space contention is
-measured separately, not counted as an unexpected system failure.
+In the historical benchmark, each load conversation performed information dialogue,
+collection, code confirmation, options, explicit submission, typed review, and
+approval/recording or refusal. Turns within a thread were sequential; different
+threads ran concurrently. Test choices came only from offered IDs. More-option turns
+found distinct choices for each batch; they did not create holds or bypass the real
+atomic submission check. Each profile had 15 approvals and 15 refusals, keeping the
+20-space fixture within capacity while retaining prior approvals. Deliberate same-space
+contention was measured separately, not counted as an unexpected system failure.
 
-## Historical end-to-end scenarios: 11/11 passed
+## Historical end-to-end scenarios: 11/11 passed (2026-10-31 UTC)
 
 | Scenario | Checked outcome |
 | --- | --- |
 | RAG → multi-turn collection/correction → invalid review → approval | Missing facts unknown; private history filtered; current confirmation; fresh invalid-response interrupt; canonical pending hold; actual MCP/file and final success reply |
 | Refusal | Hold released; no recording receipt/file |
-| Current public facts | Python CRUD hours/prices appear in current-turn evidence/answer |
+| Public facts at the time | Python CRUD hours/prices appeared in current-turn evidence/answer; this predates the priced Chroma fixture |
 | Duration changes | Old offers cannot submit after hours change and fresh confirmation |
 | Permanent failure before writing | One attempt, explicit failure, approval retained, manual retry succeeds |
 | Transient transport exhaustion | Two attempts, unconfirmed outcome, no ordinary-chat retry; manual retry retains original approval/period |
@@ -160,7 +146,11 @@ Fault cases explicitly inject client-side failures. The lost-receipt case perfor
 real stdio publication/replay before dropping receipts. Those fault latencies are
 not mixed into the normal-load table.
 
-## Historical normal load: 90/90 conversations passed
+## Historical normal load: 90/90 conversations passed (2026-10-31 UTC)
+
+This benchmark predates the priced Chroma fixture and is not a priced-workflow load
+run. The reproduction commands exercise the code present when they are run, not the
+historical version automatically.
 
 | Concurrent conversations | Completed | Approved/refused | Elapsed, excluding startup/warmup | Conversations/s | Observed simultaneous graph nodes |
 | --- | --- | --- | --- | --- | --- |
@@ -188,28 +178,12 @@ they are not isolated service-capacity estimates.
 Scripted review delay is measured separately: about 50 ms per conversation. It is
 not human decision time or administrator throughput. Percentiles use nearest rank;
 small samples, especially n=15 recording measurements, make p95 close to the maximum.
-Raw stdout JSON includes maxima, all six node distributions, and exact sample counts.
+Raw stdout JSON includes maxima, node distributions, and exact sample counts.
 
 The ten-way same-space race had **one pending winner and nine correctly reported
 conflicts**. No file was written while pending; refusal released the winner's hold.
 
-### Load-related fix and limits
-
-An initial full run failed to confirm a recording. Import profiling showed that the
-SQLite-only recorder eagerly imported Chroma and Azure/OpenAI clients through
-`storage.__init__`; a cold import took about 11.5 s on this host, near the unchanged
-15-second attempt deadline. The public `StaticParkingStore` export now loads lazily
-and resolves/caches the original class. Import regressions verify that the recorder
-loads neither Chroma/provider clients nor NLP models. A focused cold-import check
-after the change took about 4.7 s; these are diagnostic observations, not a controlled
-statistical before/after benchmark. The final complete load run above passed with
-no recording retries. No application/MCP timeouts, approval checks, permissions, or retry policy
-were relaxed.
-
-One probe also exceeded the harness's former 45-second server-startup allowance.
-The isolated test server now allows 90 seconds locally/150 seconds live; startup
-remains bounded, excluded from load throughput, and must complete before requests.
-The application startup and MCP attempt policies are unchanged.
+### Load limits
 
 This is a shared development host with other processes, not an isolated benchmark
 machine. Throughput barely improved from five to ten clients while conversation
@@ -220,9 +194,9 @@ API workloads, **not proof of no descriptor/memory leaks** or a sustained soak/p
 resource measurement. Owned server processes and diagnostic handles are closed;
 recorder children were absent at inspection. Do not infer a production SLA.
 
-## Historical live pipeline smoke: 2/2 passed
+## Historical live pipeline smoke: 2/2 passed (2026-10-31 UTC)
 
-Real temporary Chroma seeding/retrieval, current extraction and administrator
+Real temporary Chroma seeding/retrieval, the then-current extraction and administrator
 models, typed review, SQLite and actual stdio MCP were used, with tracing disabled:
 
 - **Approval:** RAG questions, duration-only collection, surname correction,
@@ -238,31 +212,16 @@ Live dialogue median/p95 was 2.614/7.964 s (n=13); whole conversation was
 single actual recording node took 4.078 s. These tiny-sample timings are **smoke
 observations only**. No live-provider concurrent load or fresh browser demonstration
 was performed; review responses were scripted through the Studio-compatible interrupt.
-Existing reported manual Studio evidence remains separately described in README.
-
-## Final regression and source checks
-
-The final offline discovery run completed **339 tests in 430.502 seconds**:
-**335 passed and four opt-in live component checks skipped**. It includes the
-18 new harness tests, two cold-import regressions, and all existing storage,
-startup, collection, privacy, retrieval, review, recording, replay/concurrency,
-timeout/cancellation and actual Agent Server checks. The two live full-pipeline
-checks above are separate evidence, not counted as offline test passes.
-
-Ruff lint, Ruff formatting checks (46 Python files), ty type checking and
-`git diff --check` passed. The fixed PROJECT_REQUIREMENTS.md, dependency lockfile,
-provider configuration, static fixture and MIT license were not changed.
 
 ## Requirement coverage and delivery
 
 | Stage 4 baseline requirement | Implementation/evidence |
 | --- | --- |
-| LangGraph orchestration and complete workflow | Existing six-node graph in `parking_agent.py`; lifecycle/hold/recording logic documented in README |
-| Entire workflow integration testing | Eleven real HTTP/server/stdio scenarios plus prior sync/async graph and actual server tests |
-| Dialogue, administrator confirmation and recording load | Three measured conversation profiles, per-node distributions, real typed resumes and stdio, separate contention race |
+| LangGraph orchestration and complete workflow | Graph in `parking_agent.py`; lifecycle/hold/recording logic documented in README |
+| Entire workflow integration testing | Dated real HTTP/server/stdio scenarios plus sync/async graph and actual server tests |
+| Dialogue, administrator confirmation and recording load | Historical three-profile benchmark, node distributions, real typed resumes and stdio, separate contention race; later small regression |
 | Usage, architecture, agent/server logic, setup and deployment | README, PARKING_DATA_MODEL.md, this report; selected Linux/local Studio deployment only |
 | Repository link for each stage | README submission table; publication/answer-field submission remains an operator action |
 
-No production platform, new administrator channel, expiry timer, extra LLM,
-dependency, or mandatory extra-credit artifact was introduced. RAG quality and
-privacy limitations remain in RAG_EVALUATION.md and GUARDRAIL_EVALUATION.md.
+RAG quality and privacy limitations are documented in RAG_EVALUATION.md and
+GUARDRAIL_EVALUATION.md.

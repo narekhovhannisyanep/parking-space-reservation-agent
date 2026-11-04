@@ -5,7 +5,7 @@ requirements. The fixed baseline is [PROJECT_REQUIREMENTS.md](PROJECT_REQUIREMEN
 scope and decisions are in [AGENTS.md](AGENTS.md). Implement the four stages without
 adding production-grade parking management or speculative future-proofing.
 
-## Accepted simplifying assumptions
+## Assumptions
 
 - Spaces have individual IDs; allocation belongs in Python code.
 - Every space fits any vehicle. No categories, dimensions, clearance checks, or
@@ -14,7 +14,7 @@ adding production-grade parking management or speculative future-proofing.
   without plates. Do not require a plate format or invent an identifier.
 - Public parking information and private reservation details remain separate.
 
-## Static inventory (implemented)
+## Static inventory
 
 `storage/parking_spaces.json` contains 20 mock spaces at fictional `demo-central`.
 Each record requires exactly these fields:
@@ -44,8 +44,10 @@ currency is fixed to USD. `SpaceFilters` supports optional exact `space_id` and 
 validated `HourlyBudget` with numeric `$lt`/`$lte`/`$gt`/`$gte` clauses;
 search always retains location/type/schema scope before semantic ranking.
 
-Chroma's default collection is `parking_spaces_v3`. Use a fresh collection when
-moving from an older schema: Chroma merges metadata on upsert. See README for seeding.
+Chroma's default collection is `parking_spaces_v3`. Use a fresh schema-3 collection
+when migrating from an older schema: Chroma merges metadata on upsert, and same-ID
+cross-schema upserts are refused. Preserve older collections and follow README's
+migration and seeding instructions; do not erase or reindex populated data automatically.
 The fixture is intentionally limited public space/location evidence, not a complete
 facility knowledge base. Hourly prices come solely from Chroma metadata. Missing hours
 remain unknown until provided through Python CRUD. Descriptions are fictional route
@@ -53,10 +55,9 @@ evidence, not certified accessible bays, vehicle-fit flags, or hard feature cons
 See RAG_EVALUATION.md for measured information coverage and limits.
 
 At server startup, missing/empty configured collections are immediately seeded from
-the approved mock fixture. Populated collections are reused unchanged. Static-data
-change/approval workflows are outside the agreed scope.
+the mock fixture. Populated collections are reused unchanged, without freshness checks.
 
-## Dynamic information (storage and retrieval implemented)
+## Dynamic information
 
 SQLite supplies `working_hours` and `availability` as JSON snapshots keyed
 by `(location_id, kind)`, with UTC `updated_at` write timestamps. CRUD operations
@@ -77,7 +78,7 @@ The same SQLite startup reset recreates both tables empty.
 
 The legacy Python CRUD kind `prices` remains accepted for API compatibility, but is
 never read into RAG evidence or used for filtering/display. Do not populate it: prices
-have one authoritative source, the reviewed Chroma inventory. Price-only questions read
+have one authoritative source, the Chroma inventory. Price-only questions read
 scoped metadata to compute a minimum/maximum summary without embeddings or full prose.
 
 Python reads inventory IDs and applies dynamic eligibility before semantic ranking.
@@ -85,9 +86,10 @@ Chroma embeds the fixed public-topic query derived from the latest user message 
 returns up to three eligible similarity matches using a native result limit. Optional
 hourly price constraints apply to both the matching-record count and semantic query,
 before top-K ranking. No hard feature flags are modeled, and the whole inventory is not
-randomly sampled. Only retrieved descriptions/rates appear in `availability_options`. Non-offer retrieval
-uses `static_spaces` for directions/identity. Offered `space_id` values live in the
-thread's internal `offered_space_ids` list; suggestions never write or hold spaces.
+randomly sampled. Only retrieved descriptions/rates appear in `availability_options`.
+Non-offer retrieval uses `static_spaces` for directions/identity. Offered `space_id`
+values live in the thread's internal `offered_space_ids` list; suggestions never write
+or hold spaces.
 `offer_candidate_ids` preserves the current browse choices through collection and
 duration changes; `offer_query` contains only code-owned public-topic terms. Confirmation
 automatically rechecks candidates, keeping eligible IDs/order and filling only vacancies
@@ -99,9 +101,9 @@ are persisted in this public-topic query.
 "other options" follow-up excludes them before ranking. When set, the evidence also
 carries `previous_offers_excluded` (a count, not IDs).
 The server also prepares bounded baseline evidence before interaction, without adding
-the entire static inventory to prompts. No occupancy-feed/refresh-service platform is needed.
+the entire static inventory to prompts.
 
-## Optional hourly budget (implemented)
+## Optional hourly budget
 
 `ReservationExtraction.budget_phrase` is a separate optional verbatim phrase in the
 existing structured extraction call, allowed on information and reservation turns.
@@ -125,11 +127,11 @@ Code appends every offered ID, description, and USD/hour rate to guarded informa
 and collection replies. General model explanation/grounding remains prompt-guided;
 the authoritative option entries, not arbitrary model prose, enforce the selected list.
 
-## Reservation details (collection implemented)
+## Reservation details
 
 Required user fields are first name, surname, `car_number`, and reservation period.
-The user-approved simplification represents the requested period as positive
-`duration_hours`. Users supply only how many hours, never a date/time or timezone.
+The requested period is represented as positive `duration_hours`. Users supply only
+how many hours, never a date/time or timezone.
 Python derives start/end from the application server's UTC clock at submission.
 
 `reservation_collection.py` uses field proposals, a draft, a thread-scoped session,
@@ -155,13 +157,14 @@ universal semantic correctness guarantees.
 Personal fields are not written to Chroma or public SQLite snapshots. They are
 present in model inputs and private graph checkpoints; Studio can display them.
 Necessary details reach extraction, while detected unrelated PII is filtered and
-updates are grounded in sanitized text. General-answer history/model outputs are
+updates are grounded in sanitized text. Extraction permits PERSON spans, so unrelated
+names in the latest message may also reach the provider. General-answer history/model outputs are
 sanitized. Thread `privacy_values` retains collected names/vehicle identifiers to
 filter historical mentions after corrections/cancellation/new drafts. This is not
 deletion or access control. See README and GUARDRAIL_EVALUATION.md for local detection,
 streaming, provider, checkpoint, and language limitations.
 
-## Private reservation ledger and administrator approval (Stage 2 implemented)
+## Private reservation ledger and administrator approval
 
 `storage/reservations.py` uses a separate `parking_reservations` table in the configured
 SQLite database. Public fact CRUD and RAG evidence never return these records.
@@ -186,10 +189,11 @@ inside a database transaction. Existing identity retries must match thread, spac
 and collected details exactly; retries preserve the original period even as the clock
 advances. Completed decisions cannot be reversed.
 
-The user confirms details, receives automatically rechecked options, and submits one offered ID with
-`/submit SPACE_ID`. Offers preview a now-based UTC window and bind to the validated
-duration, not a fixed start. Duration changes invalidate confirmation/eligibility binding,
-not browse candidates; fresh confirmation automatically rechecks them. Delays alone do not.
+The user confirms details, receives automatically rechecked options, and submits one
+offered ID with `/submit SPACE_ID`. Offers preview a now-based UTC window and bind to
+the validated duration, not a fixed start. Duration changes invalidate confirmation and
+eligibility binding, not browse candidates; fresh confirmation automatically rechecks
+them. Delays alone do not.
 Pending/approved rows block overlaps using `[start, end)`;
 adjacent periods can share a space, including within the same thread. Unknown-period
 suggestions use current observations and exclude only holds active now. Before ranking,
@@ -214,10 +218,10 @@ agent reports the code-controlled outcome, not model-generated authority.
 
 Refusal releases the hold; approval before end retains it and its approval time, even
 though start has passed. Approval at/after end becomes `elapsed`, never approved, and
-releases the hold. Ended periods
-stop blocking on-demand queries without deleting records or running timers. No editing,
-cancellation, or new request is allowed while waiting; `/new` after the decision starts
-a separate one-space request. Earlier approved requests remain authoritative and block
+releases the hold. Ended periods stop blocking on-demand queries without deleting
+records or running timers. No editing, cancellation, or new request is allowed while
+waiting; `/new` after the decision starts a separate one-space request. Earlier approved
+requests remain authoritative and block
 their overlapping periods. Startup deliberately clears all ledger rows; old graph
 checkpoints cannot recreate a missing submitted request on review.
 
@@ -228,7 +232,7 @@ the configured administrator-composition model and remain visible in private SQL
 Studio, checkpoints, and debug data. Public model copies/streams retain the privacy
 boundaries described in README; raw administrator model tokens use `nostream`.
 
-## Approved file recording (Stage 3 implemented)
+## Approved file recording
 
 Only human-approved reservations may be written as:
 
@@ -270,11 +274,6 @@ report unconfirmed output honestly and rely on idempotent retry. Approval revers
 background retries, file-to-SQLite synchronization and cross-restart recovery are out
 of scope. Missing ledger rows after reset cannot be reconstructed from checkpoints/files.
 
-Protection is the selected trusted-local process/OS boundary, not separate human
-authentication or a sandbox. See README for primitives, failure behavior and limitations.
-Actual stdio and Agent Server integration, replay, concurrent writing, failure and
-cleanup tests are implemented. STAGE4_VALIDATION.md records the completed full-system
-local load and two real-provider pipeline smoke checks. Load uses synthetic data/
-injected models; live smoke does not establish browser accuracy, live-provider load
-capacity, or complete confidentiality. Stage 4 adds no operational data fields or
-file-to-ledger synchronization.
+Protection is a trusted-local process/OS boundary, not separate human authentication
+or a sandbox. See README for primitives, failure behavior and limitations, and
+STAGE4_VALIDATION.md for full-system validation evidence and its limits.

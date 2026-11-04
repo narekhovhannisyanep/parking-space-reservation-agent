@@ -17,8 +17,8 @@ uv run --no-sync --env-file .env python -m rag_evaluation --part retrieval   # e
 uv run --no-sync --env-file .env python -m rag_evaluation --part all         # + chat/extraction models
 ```
 
-The CLI prints a JSON report. It never touches the project `.data/` stores and writes
-no files.
+The CLI prints a JSON report and uses temporary Chroma/SQLite stores. It does not
+write a persistent report or touch the project `.data/` stores.
 
 ## Method
 
@@ -52,43 +52,34 @@ no files.
   Rules can misjudge paraphrases, so failures were inspected by hand (see below).
 - **Facts.** Hours/availability are written through Python CRUD into temporary SQLite
   and removed afterwards. Hourly prices come only from Chroma metadata. One case
-  injects contradictory legacy SQLite prices and verifies they are ignored. The
-  earlier missing-price case is now this legacy-precedence case because prices are
-  required in the fixture; empty-inventory price handling has separate unit coverage.
+  injects contradictory legacy SQLite prices and verifies they are ignored; empty-
+  inventory price handling has separate unit coverage.
 - **Latency.** Latency includes the provider network round trip, which this evaluation
   does not control. Retrieval-only turns use stub models, so `parking_assitant` and
   `reservation_collection` reflect local overhead only.
 
-## Current priced-inventory results (2026-11-02)
+## Priced-inventory results (2026-11-02)
 
-The fixture now contains 20 realistic, differentiated location/route descriptions,
-practical benefits and trade-offs, preserving every space ID/location. Required fixed
-USD rates are numeric Chroma metadata only (`hourly_price_cents=100..2000`, schema 3),
-not embedded prices. Queries still embed code-owned public terms, now also covering
+The measured fixture contains 20 differentiated location/route descriptions,
+practical benefits and trade-offs. Required fixed USD rates are numeric Chroma
+metadata only (`hourly_price_cents=100..2000`, schema 3),
+not embedded prices. Queries embed code-owned public terms, including
 mobility, shopping bags, pushchairs, weather, traffic and departures. Negative stairs
-requests map to step-free access. No new package, provider, real `.env` edit or populated
-project-data reseeding/deletion was needed. All evaluation stores were temporary.
+requests map to step-free access. All evaluation stores were temporary.
 
 The live run used `text-embedding-3-small-1` and `gpt-6-luna-2026-09-22`, tracing off,
 with `function_calling`. Two answer runs both passed 12/13 cases. The following is
 one retrieval measurement, not a statistically powered comparison:
 
-| Original 20-query set, K=3 | Earlier short fixture (2026-10-30) | Detailed priced fixture |
-| --- | --- | --- |
-| Recall@3 | 0.535 | 0.547 |
-| Capped Recall@3 | 0.608 | 0.625 |
-| Precision@3 | 0.483 | 0.500 |
-| Hit@3 | 0.800 | 0.750 |
-| MRR | 0.692 | 0.567 |
-| Request detection (14) | 14/14 | 14/14 |
-| Disjoint other-options conversations (3) | 3/3 | 3/3 |
-
-**Results are mixed, not a uniform retrieval improvement.** Recall/precision increased
-slightly; hit rate and first-relevant ranking decreased. Longer realistic descriptions
-provide more answerable context, but mentions of route limitations can compete with
-positive benefits in embeddings. The old labels/query set are retained for visibility;
-the richer corpus expands some meanings, so the historical comparison is imperfect.
-We did not rewrite the fixture/query vocabulary to erase challenge failures.
+| Original 20-query set, K=3 | Result |
+| --- | --- |
+| Recall@3 | 0.547 |
+| Capped Recall@3 | 0.625 |
+| Precision@3 | 0.500 |
+| Hit@3 | 0.750 |
+| MRR | 0.567 |
+| Request detection (14) | 14/14 |
+| Disjoint other-options conversations (3) | 3/3 |
 
 ### Practical benefits: 8 separate queries
 
@@ -105,11 +96,11 @@ Aggregate capped Recall@3 / Precision@3: **0.583**; MRR: **0.604**.
 | “Trouble walking” challenge | OUT-V01, G-A01, G-A04 | 0.000 |
 | “Won't get soaked” challenge | G-A04, OUT-V01, OUT-V02 | 0.000 |
 
-The two challenge paraphrases were frozen before measurement and were not added to
-the mapper after failing. They are a tiny out-of-vocabulary probe, not an independent
-statistical hold-out benchmark. Rain/unloading negatives can rank highly because they
-mention the same concepts as positive requests. Descriptions remain semantic preferences,
-not hard accessibility/weather constraints or a certification of route suitability.
+The two challenge paraphrases were frozen before measurement. They are a tiny
+out-of-vocabulary probe, not an independent statistical hold-out benchmark.
+Rain/unloading negatives can rank highly because they mention the same concepts as
+positive requests. Descriptions remain semantic preferences, not hard accessibility/
+weather constraints or a certification of route suitability.
 
 ### Budget compliance and live extraction
 
@@ -134,9 +125,9 @@ Both runs: **12/13 conversations fully passed**. All four offer-list checks ment
 every offered option; all five unoffered-ID checks passed; all twelve no-booking-claim
 checks passed. Hours/prices and legacy-price precedence passed. The remaining failure
 is the known exact-ID question “Where is space E02?”: fixed topic queries do not perform
-an exact-ID lookup. No exact-ID feature was added to make this test pass.
+an exact-ID lookup.
 
-Application code now appends every validated offered ID/description/rate to guarded
+Application code appends every validated offered ID/description/rate to guarded
 model replies as well as collection/control replies. That completeness improvement is
 **code enforcement, not evidence that the answer model learned to list all options**.
 General model prose remains prompt-grounded; this is not complete output-grounding or
@@ -144,7 +135,7 @@ prompt-injection protection.
 
 Latest of the two measured answer runs (14 turns): extraction median 1.788 s / p95
 2.969 s; context median 0.714 s / p95 1.697 s; response median 2.536 s / p95 11.944 s;
-whole turn median 5.574 s / p95 14.420 s. Retrieval-only context (56 nodes) median
+whole turn median 5.574 s / p95 14.420 s. Retrieval-only context (56 executions) median
 0.616 s / p95 1.500 s. Provider latency varies and the shared-host/sample size is small;
 these are not load-capacity measurements.
 
@@ -152,22 +143,14 @@ Offline tests additionally cover budget persistence/clearing, confirmation indep
 unsupported/missed/forged extraction, boundary comparisons, availability intersection,
 submission rate rechecks, async/thread isolation, and same-ID cross-schema upsert refusal.
 A real localhost HTTP Agent Server test carries a budget-filtered option through typed
-approval and actual stdio MCP recording with exact output checks. Existing Stage 4
-load evidence remains historical and is not claimed to be a new priced-workflow load run.
-The final offline regression completed **359 tests: 354 passed, five opt-in live
-component checks skipped**. Ruff lint/format and ty checks passed. Long non-cent
-decimal amounts are rejected by inspecting their original digits, not rounded with
-a floating-point or decimal precision context.
+approval and actual stdio MCP recording with exact output checks. The historical
+90-conversation Stage 4 benchmark is not a priced-workflow load run.
 
-## Relevance-routing correction (2026-11-02)
+## Relevance-routing validation (2026-11-02)
 
-The screenshot request “I need a restaurant” exposed an overly broad fallback:
-ordinary chat without a collection reply entered retrieval, and an unmatched topic
-reused three startup parking records. The existing structured extraction schema now
-distinguishes parking information/reservation from `unrelated` turns. Python skips
-retrieval and clears per-turn evidence for unrelated messages, preserving private
-drafts, confirmation, browse options and optional budgets. No classifier call,
-dependency, provider change or project-data reset was added.
+The structured extraction schema distinguishes parking information/reservation from
+`unrelated` turns. Python skips retrieval and clears per-turn evidence for unrelated
+messages, preserving private drafts, confirmation, browse options and optional budgets.
 
 Offline regressions cover sync/async bypass, shared words (restaurant hours/prices/book),
 stale-evidence clearing, budget/confirmation/option continuity and bounded guarded
@@ -179,118 +162,41 @@ All **nine live component checks passed** separately (65.799 s), using the exist
 mocked stores. The relevance test checked eight explicit cases: three unrelated
 restaurant requests, a restaurant-visit parking request, general parking information,
 opening-hours follow-ups after parking and restaurant discussion, and other parking
-options. The screenshot request plus its hours follow-up also passed through the real
+options. A restaurant request plus its hours follow-up also passed through the real
 model graph with no storage retrieval, empty evidence and parking-scope replies.
-Both new live tests passed again (13.245 s and 8.785 s).
 
 These are small synthetic smoke checks, **not universal intent accuracy**, new browser
 validation or live-provider load evidence. Relevance and answer wording remain
 model-guided; a misclassification can still select the wrong branch. Retrieval quality
 and latency tables above predate this routing correction and were not remeasured.
 
-## Historical results (2026-10-30, `gpt-6.1-sol-2026-09-29`, `text-embedding-3-small-1`)
+## Earlier Stage 1 results (2026-10-30)
 
-### Retrieval, before and after the query-vocabulary change
+On the earlier 20-space short-description fixture, using `gpt-6.1-sol-2026-09-29`
+and `text-embedding-3-small-1`, the 20-query retrieval run measured Recall@3 0.535,
+capped Recall@3 0.608, Precision@3 0.483, Hit@3 0.800 and MRR 0.692. Request
+detection passed 14/14 messages and other-options follow-ups 3/3 conversations.
+Elevator synonyms and some ground-level or one-word location queries remained weak.
+These are historical results on a different fixture, not current performance.
 
-The baseline was measured with the earlier code: six fixed topic terms, and no
-"spot"/"park"/"vacant" request words.
-
-| Metric (K=3, 20 queries) | Before | After |
-| --- | --- | --- |
-| Recall@3 | 0.160 | **0.535** |
-| Capped Recall@3 | 0.183 | **0.608** |
-| Precision@3 | 0.150 | **0.483** |
-| Hit@3 (at least one relevant) | 0.35 | **0.80** |
-| MRR | 0.317 | **0.692** |
-| Request detection accuracy (14) | 0.714 (recall 0.50) | **1.000** |
-| "Other options" follow-ups (3) | 0 / 3 | **3 / 3** |
-
-Before the change, 11 of 20 queries embedded the identical string `availability` and
-received the same three spaces. Three "spot" requests received no options at all.
-After the change, location preferences become code-owned terms such as `stairs`,
-`outdoor area`, `second level` or `north wall`. Stairs, outdoor, second-level, wall,
-lobby and fence queries now reach perfect capped recall.
-
-Remaining weak cases after the change:
-
-| Case | Query embedded | Offered | Observation |
-| --- | --- | --- | --- |
-| elevator / lift / need-spot-elevator | `lift availability` | G-E02, G-A04, G-A01 | Only one fixture text uses "lift"; the others say "elevator", so synonyms rank lower |
-| ground-elevator-free | `lift ground level availability` | L2-B01, L1-E01, L1-B02 | "level" dominates; few ground-floor descriptions say "ground" |
-| corner, walkway, west-entry | e.g. `corner availability` | unrelated | One-word topics are weak signals for short descriptions |
-| east-side | `east availability` | 1/3 relevant | Same weakness |
-
-Possible next tuning steps, not implemented, to avoid fitting this small labeled set:
-- emit both `lift elevator`;
-- drop the generic `availability` word when a location term exists;
-- enrich fixture descriptions.
-
-Any tuning should be re-measured with a held-out query set.
-
-### Answers (13 live conversations)
-
-| Check | Pass |
-| --- | --- |
-| No booking/approval claim (incl. "please book now" and prompt-injection attempts) | 12 / 12 |
-| No unoffered inventory IDs/labels | 5 / 5 |
-| Offers non-empty when eligible / empty when all blocked | 4 / 4, 1 / 1 |
-| Follow-up options disjoint | 1 / 1 |
-| Missing hours/prices stated as unknown | 2 / 2 |
-| Known private name not echoed | 1 / 1 |
-| Stored hours/prices quoted | 2 / 2 |
-| All offered options mentioned | 2 / 4 |
-| Exact-space location lookup ("Where is space E02?") | 0 / 1 |
-| **Cases fully passed** | **10 / 13** |
-
-Failures, inspected by hand:
-
-- **Not all offered options are mentioned (2 cases).** The model named only the best
-  elevator match (E02 / E01-L1) and left out the other two code-selected options,
-  which aren't near the elevator. That's arguably helpful, but users don't see every
-  offer in the model's text. Deterministic collection replies already list all
-  options; information replies rely on the prompt.
-- **Exact-ID lookup (1 case).** "Where is space E02?" embeds only `location directions`,
-  so E02 isn't retrieved, and the model correctly says it has no details instead of
-  inventing directions. Exact-ID search was deliberately not implemented, and fixed
-  queries never embed user-supplied IDs. This case documents that limit.
-- A first live run reported 0/2 for "unknown" statements. Inspection showed correct
-  answers written with typographic apostrophes ("don’t", "aren’t") that the rule
-  missed. The rule was fixed, covered by a unit test and the run repeated. Results
-  above are from that repeated run.
-
-### Latency
-
-| Node / turn (live answer run, n=13–14) | Median | p95 |
-| --- | --- | --- |
-| `reservation_collection` (structured extraction model call) | 2.54 s | 5.51 s |
-| `context_augmentation` (SQLite read + query embedding + Chroma) | 0.51 s | 1.42 s |
-| `parking_assitant` (answer model call; ~0 for deterministic replies) | 2.83 s | 4.28 s |
-| Whole turn | 5.38 s | 9.79 s |
-
-In the retrieval-only run (n=41), `context_augmentation` had a median of 0.46 s and
-a p95 of 0.61 s. Nearly all of that is the embedding round trip; local
-Chroma/SQLite work is a few milliseconds. Seeding the temporary collection with 20
-documents took about 3–5 s.
-
-Information turns in this historical Stage 1 run made two sequential model calls:
-extraction, then answer. Current deterministic collection/control/outcome turns do
-not always call both models. An earlier answer run on the same day saw a 63 s p95
-from one slow provider response, so provider latency varies. Current full-workflow
-timings are reported separately in STAGE4_VALIDATION.md.
+The rule-checked live answer run passed 10/13 conversations: two failed to mention
+all offered options and one failed the exact-ID location question. It used the then
+current hours/prices behavior, including missing-price checks. In the live answer run
+(node/turn samples n=13–14), median/p95 latency was 2.54/5.51 s for extraction,
+0.51/1.42 s for context, 2.83/4.28 s for response, and 5.38/9.79 s per turn.
+Retrieval-only context latency was 0.46/0.61 s (n=41). These small, provider-dependent
+samples are not capacity measurements; the dated Stage 4 results use a different
+full-workflow method.
 
 ## Limits
 
-- The corpus is small, synthetic and English-only. The labels were written by the
-  developer from 20 short descriptions. The before/after comparison used the same
-  queries the fixes were designed for, so the absolute "after" numbers are
-  optimistic. The baseline weaknesses, though, are reproducible.
+- The corpus is small, synthetic and English-only. Labels are developer-written, and
+  the queries include examples used in developing the vocabulary; results are not an
+  independent estimate of generalization.
 - Live results are non-deterministic and depend on the provider and its version.
   Repeated runs can vary.
 - Rule-based answer checks can misjudge paraphrases. They don't measure helpfulness,
   tone or completeness.
-- These measurements preceded the private hold ledger and duration-only workflow.
-  They do not measure current period allocation or approved recording; the ledger
-  is now implemented and validated separately in STAGE4_VALIDATION.md.
-- This historical Stage 1 evaluation is not a load test. Current full-system local
-  concurrency/throughput and live pipeline smoke are reported in STAGE4_VALIDATION.md;
-  those results do not replace the retrieval-quality measurements above.
+- Stage 1 retrieval and answer measurements do not measure period allocation or
+  approved recording and are not load tests. Dated full-system local concurrency and
+  live pipeline smoke results are reported separately in STAGE4_VALIDATION.md.

@@ -4,10 +4,8 @@ A Python, LangChain, and LangGraph assignment project: a RAG chatbot collects
 reservation details, a second agent coordinates human administrator approval,
 and an MCP service records approved reservations in a text file.
 
-**Scope:** implement the original four stages, not a production-grade parking
-platform. Do not add scaling infrastructure, future-proof abstractions, or extra
-features unless the user requests them. Required privacy, recording-service security,
-reliability, evaluation, and testing remain part of the assignment.
+This is a learning project implementing the four assignment stages, not a
+production-grade parking platform.
 
 - [PROJECT_REQUIREMENTS.md](PROJECT_REQUIREMENTS.md): fixed original assignment baseline,
   transcribed from the user's screenshots.
@@ -19,14 +17,14 @@ reliability, evaluation, and testing remain part of the assignment.
 
 ## Current status
 
-| Stage | Implemented | Still needed |
-| --- | --- | --- |
-| 1: RAG/chatbot | Startup-ready Chroma/SQLite stores, 20 detailed mock descriptions with USD/hour metadata, optional validated persistent budgets, three availability/price-filtered semantic options with deterministic priced entries, draft confirmation, privacy guards, and measured retrieval/answer evaluation | Optional semantic retrieval tuning (see RAG_EVALUATION.md limits) |
-| 2: Human approval | Second LangChain communication agent, explicit submission, SQLite period holds, typed Studio review, approval/refusal and user outcome replies; offline integration/race/replay/streaming tests; live extraction and sync/async administrator smoke checks; user-reported Studio demo | No remaining implementation for the selected Stage 2 scope; verification limits below |
-| 3: Approved recording | Narrow Python stdio MCP service, read-only approval checks, atomic per-request files, bounded/manual retries, safe outcome replies, private permissions and startup cleanup; real MCP and Agent Server integration tests | No remaining implementation for the selected Stage 3 scope; trusted-local limits below |
-| 4: Orchestration | Complete graph, 13 current HTTP/server/stdio scenarios, historical 90-conversation local load, refreshed small-load/contention checks, and real Azure/DIAL screenshot-flow approval/refusal smoke | No implementation remaining for the selected slice; repository publication/submission is a separate operator action; see report limits |
+| Stage | Behavior |
+| --- | --- |
+| 1: RAG/chatbot | Public parking information, availability- and budget-filtered options, draft collection and privacy guards |
+| 2: Human approval | Explicit submission, SQLite period holds and typed administrator review in Studio |
+| 3: Approved recording | Private stdio MCP service verifies approval and writes an atomic per-request file |
+| 4: Orchestration | LangGraph connects the stages; integration, local-load and live-smoke evidence is documented in [STAGE4_VALIDATION.md](STAGE4_VALIDATION.md) |
 
-**All four stages are implemented and validated for the selected assignment slice.** Confirmed details can be submitted
+**All four stages are implemented for the selected assignment slice.** Confirmed details can be submitted
 for a single offered space, held in SQLite, and approved or refused by a human in
 Studio. User confirmation is not administrator approval; approval is not a successful
 file write. Only SQLite-confirmed human approvals proceed to the MCP recording step;
@@ -96,9 +94,8 @@ add a separate public API or UI. Startup waits for both databases and baseline e
 - **Connect the VPN/network required by the configured Azure/DIAL endpoint before
   starting the server.** First-time Chroma seeding calls that endpoint for embeddings;
   an unreachable endpoint can leave startup waiting on request timeouts/retries and
-  Studio showing “Failed to initialize Studio / Failed to fetch”. This failure was
-  reproduced and resolved by connecting the VPN, without changing code. Keep the
-  required connection active for model/embedding calls during chat, too.
+  Studio showing “Failed to initialize Studio / Failed to fetch”. Keep the required
+  connection active for model/embedding calls during chat, too.
 - Check `http://127.0.0.1:2024/ok` and `/docs` in the same browser used for Studio. If
   they are unreachable, check server startup output and endpoint connectivity first.
   A populated Chroma collection needs no startup embedding call, but chat still may.
@@ -146,8 +143,8 @@ START → reservation_collection
   /retry-recording on current approved failed/unconfirmed request → record_approved_reservation → parking_assitant → END
 ```
 
-`parking_assitant` retains the user-selected spelling. The accepted complete
-architecture uses two agents coordinated by Python/LangGraph, not a third orchestrator
+`parking_assitant` is the response-node spelling. The architecture uses two agents
+coordinated by Python/LangGraph, not a third orchestrator
 LLM. The human administrator alone approves; Python owns allocation, reservation
 state, approval enforcement, and file formatting/writing.
 
@@ -164,11 +161,9 @@ server-startup side effects.
 
 ## Persistent parking information
 
-The selected static/dynamic split is an optional assignment improvement we are
-keeping: local persistent Chroma for descriptions and fixed mock hourly prices,
-built-in SQLite for hours, availability, and private reservation holds. Neither requires
-a separate database server. The user-approved pricing change replaces SQLite prices
-with Chroma numeric metadata, not a second price source.
+Local persistent Chroma stores descriptions and fixed mock hourly prices; built-in
+SQLite stores hours, availability, and private reservation holds. Neither requires
+a separate database server. Chroma numeric metadata is the price source.
 
 At each application-server startup:
 
@@ -236,28 +231,25 @@ uv run --env-file .env python -m storage.seed --file path/to/reviewed-spaces.jso
 ```
 
 Repeated upserts update the same IDs; unrelated IDs are preserved. Omitted records
-are not deleted automatically. SQLite is untouched. The agreed demo uses the bundled
-mock fixture without implementing static-data-change or approval logic. The explicit
-seed CLI remains an operator API; startup never updates a populated collection.
+are not deleted automatically. SQLite is untouched. The explicit seed CLI is an
+operator action; startup never updates a populated collection.
 
-**Migrating the earlier demo to priced inventory:** stop the server and change only
-`PARKING_CHROMA_COLLECTION` in your existing `.env` to `parking_spaces_v3` (the new
-default and `.env.example` value). Connect the required VPN, then run
-`uv run --env-file .env python -m storage.seed --dry-run` and
-`uv run --env-file .env python -m storage.seed`, then restart. Alternatively an empty
-v3 collection will seed at startup. The old Chroma collection/data is retained, and
-the original 20 space IDs are preserved in the new collection. Do not erase Chroma
-or upsert schema-3 records into an old-schema collection. Editing the fixture alone
-never changes a populated collection. Your real `.env` and `.data/` are not modified
-by the coding/evaluation work.
+**Schema and collection migration:** the current schema is version 3 and the default
+collection is `parking_spaces_v3`. If `.env` selects an older collection, stop the
+server and choose a fresh, empty collection by setting `PARKING_CHROMA_COLLECTION`.
+Use the default name only if that collection is missing or empty; choose another fresh
+name if it is populated. Connect the required VPN and validate the fixture with
+`uv run --env-file .env python -m storage.seed --dry-run`. The empty collection can be
+seeded at startup, or explicitly with `uv run --env-file .env python -m storage.seed`
+before restarting. Explicit upserts update matching IDs, including in populated
+collections; do not run them against data you intend to preserve unchanged. Startup
+resets SQLite and approved output as described above.
 
-**Existing database compatibility:** the current schema is version 3 and the default
-collection is `parking_spaces_v3`. If `.env` selects an older collection, select a
-fresh collection and re-seed. Do not upsert new-schema records over old-schema IDs:
-Chroma merges metadata and can retain removed fields. Old-schema records are excluded
-by search filters. Do not erase existing databases to migrate.
-Changing embedding models also requires a fresh/reindexed collection. The current
-short fixture needs no chunking; automatic chunking is not implemented.
+Old Chroma collections remain intact. Do not erase them or upsert schema-3 records
+over old-schema IDs: Chroma merges metadata and can retain removed fields. Old-schema
+records are excluded by search filters. Editing the fixture does not change a populated
+collection automatically. Changing embedding models also requires a fresh/reindexed
+collection. Automatic chunking is not implemented.
 
 ### Dynamic facts
 
@@ -307,7 +299,7 @@ taken from the public inventory descriptions, so stated preferences affect ranki
 Request wording includes spaces/spots/places/slots, park (verb), free (except "free of
 charge"), vacant, reserve/book, and options; "Tell me about parking" is information only.
 Parking questions without a matching fixed topic use `parking information` and reuse
-the bounded startup static evidence; unrelated questions no longer take this fallback.
+the bounded startup static evidence; unrelated questions bypass this fallback.
 Location/directions topics still use semantic retrieval.
 Hours/prices-only turns include requested hours and/or an aggregate Chroma hourly
 price range read from scoped metadata, not space
@@ -461,12 +453,12 @@ omits it. These checks are not universal semantic understanding; review the summ
 not a provisional start/end. `SubmittedReservationRequest` adds the canonical UTC period
 inside the hold transaction. Thus time spent collecting details or choosing options
 does not consume the requested duration. **Time waiting for administrator review after
-submission does count**, as selected by the user; approval does not restart the clock.
+submission does count**; approval does not restart the clock.
 
-Submitting without required details now starts/continues collection and names only the
+Submitting without required details starts/continues collection and names only the
 missing fields (first name, surname, vehicle identifier, and how many hours). It explains
 that the assistant will show the details for checking before sending a request to the
-administrator, rather than showing the previous abstract confirmation/approval warning.
+administrator.
 If all fields are supplied but not confirmed, `/submit` displays the confirmation
 summary without creating a hold or implicitly confirming/submitting anything.
 
@@ -497,8 +489,6 @@ values remain in private filtering history; correction is not chat/checkpoint de
 Automatic revalidation failure leaves confirmed personal details but no eligible offered
 IDs/duration binding; it reports an error, never submits stale choices. Retry the failed
 run or use optional `/options` after restoring storage/provider availability.
-Current commands/revisions/duration rules describe implemented behavior, not additional
-assignment requirements that cannot be reconsidered during refactoring.
 
 **Older Studio threads:** legacy draft schedules and confirmations are discarded on
 read, while names/vehicle identifiers are retained. Provide hours and confirm the new
@@ -521,8 +511,8 @@ yourself, follow the steps below.
    Suggestions and confirmation alone never create holds.
 3. The chatbot reports **pending** and the graph pauses at `administrator_review`.
    The human administrator switches the **same thread to Graph mode**, opens the
-   interrupt, and reviews the request fields, space, and UTC period. This is the
-   chosen local administrator channel—not email, Teams, or an external notification.
+   interrupt, and reviews the request fields, space, and UTC period. Studio is the
+   local administrator channel; there is no external notification.
 4. In the typed interrupt response form, review the reservation, select exactly
    `approve` or `refuse` in **Decision**, then click the right-hand **Resume** button.
    Do not use the lower-left graph-input **Submit** button for a human decision.
@@ -546,20 +536,17 @@ of the empty human response, not missing reservation details at handoff. Interna
 does not supply them. Python resolves the checkpointed submission in the current thread
 and checks its review-payload identity against SQLite before showing/applying a decision.
 
-**After updating from the older two-field form:** restart the local server and test a
-fresh reservation. An already-paused interrupt can retain its old form schema in the
-checkpoint. Startup deliberately clears SQLite, so old submitted requests become
-unavailable; they are not migrated or resurrected. Persistent Chroma is untouched.
+An already-paused interrupt can retain an older form schema in its checkpoint. Restart
+the server and use a fresh reservation to obtain the current form; startup resets SQLite,
+so old submitted requests become unavailable rather than being resurrected. Persistent
+Chroma is untouched.
 
-There is no new dependency, environment variable, REST route, public UI, or mail setup.
 The second agent lazily uses the existing Azure/DIAL model with its own LangChain
 structured-output runnable and administrator prompt. It receives only canonical
 submitted details, not chat history, and generates a bounded neutral review message.
 Model wording omits interface names and request facts; Python supplies the exact review
-fields and UI instructions separately. This also avoids a local PERSON-detector false
-positive on “Studio” in generated wording without weakening privacy checks.
-Unsafe/unparseable wording or model API
-failures use a fixed review request; wording never supplies decision authority.
+fields and UI instructions separately. Unsafe/unparseable wording or model API failures
+use a fixed review request; wording never supplies decision authority.
 Configuration/unsupported-model failures remain safe errors; the already-created
 hold is retained and the failed graph run can be retried.
 
@@ -613,41 +600,17 @@ stream. Debug/state/task APIs, traces, and event streams remain trusted private 
 The general privacy limitations below still apply; this does not claim confidentiality
 from the local developer or comprehensive prompt-injection protection.
 
-Offline tests exercise actual sync/async LangGraph interrupts/resumes with temporary
-Chroma/SQLite, injected models/embeddings/clocks, strict decision validation, overlap
-races, refusal release, restart reset, graph replay after committed writes, and guarded
-model streaming. A network-blocked real Agent Server test also checks the one-field
-interrupt schema served to Studio, empty-response retry and decision-only approval.
-On **2026-10-31**, four opt-in live smoke checks passed against the configured Azure/DIAL
-endpoint: structured extraction, duration-only multi-turn collection/correction/confirmation,
-and sync/async administrator structured output. The administrator checks inspect parsed
-model output before fallback handling and verify that its wording is accepted while canonical
-review facts remain unchanged. These checks use synthetic data and mocked stores, with tracing
-disabled; approval/refusal graph integration remains covered by offline tests, not these
-live smoke checks. The user also reported successful VPN-connected manual Studio testing
-that day; individual browser scenarios were not itemized or independently checked by the
-coding agent. This is smoke/demo evidence, not comprehensive live-model accuracy or security
-evaluation.
-MCP/file integration is covered by the Stage 3 tests below. The completed Stage 4
-local load and live pipeline smoke evidence is separate in [STAGE4_VALIDATION.md](STAGE4_VALIDATION.md).
+Offline tests exercise sync/async interrupts and resumes, decision validation, overlap
+races, refusal, reset, replay and guarded streaming. Recorded integration, local-load
+and live pipeline smoke methods and limitations are in [STAGE4_VALIDATION.md](STAGE4_VALIDATION.md).
+These checks do not establish comprehensive live-model accuracy or security.
 
 ### Model compatibility
 
 `PARKING_EXTRACTION_METHOD` defaults to `function_calling`; `json_schema` is an explicit
 alternative. Actual endpoint support is required; there is no prose-parsing fallback.
-Offline tests do not prove live compatibility. On 2026-10-31, all four opt-in synthetic
-smoke checks passed for the current duration-only extraction and administrator schemas
-with `function_calling` and `gpt-6-luna-2026-09-22` (VPN connected). No provider change
-or static-data reset/reseeding was needed. See the verification evidence and limits above.
-Live answer accuracy is measured separately in [RAG_EVALUATION.md](RAG_EVALUATION.md).
-
-On **2026-11-02**, all nine current live component tests passed after the relevance
-routing correction, including eight topic-classification cases and the restaurant
-request/follow-up through the real graph with mocked stores and no retrieval.
-The two new relevance tests also passed a repeat run. The full offline regression
-passed 391 tests (nine opt-in live tests skipped), with lint/format/types passing.
-This does not remeasure the historical RAG benchmark or validate a fresh Studio browser
-session; see [RAG_EVALUATION.md](RAG_EVALUATION.md) for methods and limits.
+Offline tests do not prove live compatibility. Live answer evaluation and its limits
+are documented separately in [RAG_EVALUATION.md](RAG_EVALUATION.md).
 
 Opt-in extraction and sync/async administrator smoke tests (synthetic data, mocked stores,
 no tracing; no pending hold or actual human decision is created):
@@ -680,9 +643,9 @@ and control characters; Unicode and non-plate vehicle identifiers are preserved.
 
 ### Service and access boundary
 
-- The official Python SDK implements real MCP over private subprocess stdin/stdout.
-  The user selected this instead of an HTTP/FastAPI service; the permitted direct
-  function-call fallback is **not** used. Python graph code selects the tool, not an LLM.
+- The official Python SDK implements MCP over private subprocess stdin/stdout.
+  Python graph code selects the tool, not an LLM; no HTTP listener or direct
+  function-call fallback is used.
 - The only tool accepts `request_id` and `thread_id`. It accepts no approval flag,
   reservation body, filename, directory, arbitrary text, or arbitrary-write command.
   Unknown tools/extra fields are rejected. The human still reviews only Decision in Studio.
@@ -741,20 +704,17 @@ starts a separate request; it does not reverse earlier allocations or repair old
 
 ### Stage 3 verification
 
-The offline suite includes 16 writer tests, 11 MCP protocol/client tests and 9 recording
-graph tests. It exercises actual stdio success/replay, stalled-process timeout and native
+The offline suite exercises actual stdio success/replay, stalled-process timeout and native
 cancellation cleanup, strict schemas and unsafe responses (including SDK exception groups),
 concurrent same/different request writes, no partial final entries, collision/link safety,
 failure before/after publication, manual retry, unchanged approval/allocation, Unicode/UTC
 rendering and startup reset. Most graph fixtures use real in-process MCP with injected
 agent models to avoid spawning a subprocess for every fixture.
 
-The network-blocked real Agent Server test now follows collection → hold → decision-only
+The network-blocked real Agent Server test follows collection → hold → decision-only
 Studio-compatible resume → actual stdio MCP → exact recorded file and final reply. This
 uses synthetic data and injected models, not a browser/live-provider accuracy test.
-The full run on 2026-10-31 completed **319 tests, with 4 opt-in live checks skipped**;
-focused checks were also rerun during implementation. Concurrency tests are not the
-assignment's full-system load test.
+Full-system validation and its limits are documented in [STAGE4_VALIDATION.md](STAGE4_VALIDATION.md).
 
 Run just the recording checks:
 
@@ -764,7 +724,7 @@ Run just the recording checks:
 
 ## Required data protection and recording safety
 
-Stage 1 privacy filtering now uses local Presidio/spaCy detection plus deterministic
+Privacy filtering uses local Presidio/spaCy detection plus deterministic
 credential patterns, known draft values, and labeled-value checks:
 
 - Public static batches and dynamic JSON are checked before embeddings/writes.
@@ -777,7 +737,7 @@ credential patterns, known draft values, and labeled-value checks:
   Other detected sensitive data is replaced by offset-preserving spaces. Extracted
   updates must be verbatim in sanitized text, so removed values cannot become draft
   fields. Conflicting required values need clarification.
-  The same extraction call now receives bounded privacy-guarded recent messages for
+  The same extraction call receives bounded privacy-guarded recent messages for
   relevance classification, without retrieval evidence or raw history metadata.
   PERSON spans are permitted for name extraction; this local filter cannot reliably
   distinguish unrelated names in that same message. Do not include unrelated names.
@@ -829,30 +789,11 @@ Tests use the standard-library `unittest` framework (the assignment accepts pyte
 unittest), so pytest is not a project dependency. If you install pytest yourself, it
 can also discover and run these `unittest` test cases.
 
-The earlier Stage 4 offline run completed 339 tests (335 passed, four live checks
-skipped); its separate two real-provider full-pipeline smoke checks also passed.
-The **2026-11-02 priced-inventory regression completed 359 tests: 354 passed, five
-opt-in live checks skipped**, including the budget-filtered real HTTP/stdio workflow.
-The five opt-in live component checks were run separately and passed, including
-grounded budget extraction. All 12 deterministic budget evaluation cases passed;
-two live answer runs passed 12/13 cases. Retrieval results are mixed, with the
-remaining exact-ID and challenge-paraphrase limits documented in RAG_EVALUATION.md.
-Ruff lint/format and ty checks passed. No new package or provider change was made;
-the baseline requirements, real `.env`, and populated project stores were unchanged.
-See STAGE4_VALIDATION.md for the historical load evidence and its limitations.
-
-**2026-11-02 conversation fixes:** the final offline run completed **389 tests in
-329.240 seconds: 382 passed, seven opt-in live checks skipped**. It includes 27 new
-fast screenshot/edge-case regressions and a real HTTP/stdio approval/refusal check
-without a mandatory `/options` turn. The seven live component checks passed separately,
-including raw parsed space-reference and negative/vague-correction extraction. Two
-full real-provider screenshot conversations (approval/refusal) passed twice, retaining
-initial choices through correction/confirmation; approved recording used one attempt
-and refusal wrote no file. All 13 integration scenarios passed. A small six-conversation
-local load regression at concurrency five and refreshed ten-way contention check passed;
-these do not replace the historical 90-conversation benchmark or establish provider capacity.
-Ruff lint/format, ty and whitespace checks passed. Tests used disposable stores, without
-changing real `.env`, populated project data, the dependency lockfile, or baseline requirements.
+For dated results, methods and limitations, see [RAG_EVALUATION.md](RAG_EVALUATION.md),
+[GUARDRAIL_EVALUATION.md](GUARDRAIL_EVALUATION.md), and
+[STAGE4_VALIDATION.md](STAGE4_VALIDATION.md). Historical local load uses injected
+models and scripted review, not measured provider or human throughput. Small live
+smoke checks are separate from that load evidence.
 
 Run the synthetic privacy evaluation with `.venv/bin/python -m guardrail_evaluation`.
 It prints case IDs/counts, coverage metrics, and warm detector latency; no files are
@@ -868,16 +809,9 @@ uv run --no-sync --env-file .env python -m rag_evaluation --part retrieval  # or
 Neither Stage 1 evaluation is a load test. The completed full-system local load
 and live smoke report is in [STAGE4_VALIDATION.md](STAGE4_VALIDATION.md).
 
-Coverage includes Chroma/SQLite CRUD and persistence, validation/isolation/concurrency,
-startup seeding/static reuse, SQLite reset/failure propagation, real Starlette lifespan,
-eligibility-constrained semantic ranking/query privacy/thread isolation, context refresh/budgets/message preservation,
-sync/async execution, and draft
-collection/confirmation/duration handling, submission-time UTC periods, delayed review,
-expiry boundaries, replay stability, public PII rejection, extraction redaction,
-old-draft filtering, local-model readiness, guarded sync/async streaming, request/
-location-term detection, "other options" exclusion, and RAG evaluation metrics/rules.
-It does not establish complete privacy enforcement; Stage 4 load evidence and its
-limits are documented separately.
+Tests cover storage and startup, retrieval and budgets, collection and confirmation,
+submission and review, recording, privacy boundaries, and sync/async execution. They
+do not establish complete privacy enforcement.
 
 Source checks:
 
@@ -910,8 +844,7 @@ actual stdio MCP. Offline models are stateless fixtures, not measured provider
 performance. Scripted decision-only resumes exercise the existing interrupt, not
 a new administrator channel. Load/live checks stay explicit rather than running
 as part of ordinary unit-test discovery. See [STAGE4_VALIDATION.md](STAGE4_VALIDATION.md)
-for exact methods, timings, failure/retry/restart scenarios, limits and the narrow
-lazy-storage-export fix that avoids loading Chroma/provider clients in the recorder.
+for exact methods, timings, failure/retry/restart scenarios and limits.
 
 ## Presentation materials
 
@@ -927,20 +860,12 @@ slides for an approximately 10-minute talk**, authored by Narek Hovhannisyan.
 - [Slide overview](presentation/previews/contact-sheet.png): a visual layout preview.
 - [Presentation guide](presentation/README.md): coverage, validation limits, and rebuild/test commands.
 
-The user removed the bug-related screenshots after the issues were solved and confirmed
-that **all current screenshots in [presentation/](presentation/) may be used in the
-PowerPoint**. They show parking suggestions, detail confirmation, administrator review,
-approval with a recording-success reply, refusal, and the LangGraph diagram. They are
-presentation materials, not diagnostic bug evidence, and do not need replacement on
-that basis. Screenshot availability does not change the separately documented test
-results or validation limits.
-
-The user approved `python-pptx` and Pillow as isolated presentation tools. They are pinned
-in the builder's script metadata, not added to the application's dependencies or lockfile.
-Ten presentation-specific checks passed for slide/notes counts, timing, screenshot
-preservation, package relationships, layout bounds/overlap, and content. Layout previews
+The approved presentation screenshots in [presentation/](presentation/) show suggestions, confirmation,
+administrator review, approval, refusal and the graph. The demo video is separate,
+not embedded in the deck. `python-pptx` and Pillow are isolated presentation tools
+pinned in the builder's script metadata, not application dependencies. Layout previews
 were visually reviewed; **PowerPoint/LibreOffice engine rendering was not verified**.
-No application code, real `.env`, or project databases were changed to create the deck.
+Presentation materials do not change the evaluation evidence or its limits.
 
 ## Selected deployment and handoff
 
@@ -976,11 +901,9 @@ are not required by the assignment:
 | 3 — Approved MCP recording | https://github.com/narekhovhannisyanep/parking-space-reservation-agent |
 | 4 — Full workflow/testing | https://github.com/narekhovhannisyanep/parking-space-reservation-agent |
 
-The URL comes from local Git remote configuration. Remote contents/accessibility
-and assignment answer fields were not verified or changed during this validation.
-No commit or push is automatic. Presentation and CI/CD/infrastructure remain optional
-extra credit, not missing core features. Optional retrieval tuning requires a separate
-decision and re-measurement; no production/scaling backlog is implied.
+The URL comes from local Git remote configuration; remote contents/accessibility and
+assignment answer fields have not been verified. No commit or push is automatic.
+Presentation and CI/CD/infrastructure are optional extra credit.
 
 ## References
 

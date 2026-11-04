@@ -18,14 +18,13 @@
 
 **[Watch or download demo.mp4](demo.mp4)**
 
-The user-provided demo recording is available alongside the PowerPoint. Open the link
+The demo recording is available alongside the PowerPoint. Open the link
 or download the MP4 and play it locally if your viewer does not support playback.
 Viewing the recording does not require Python, provider credentials, or a running
 application server. The video is a separate presentation asset, not embedded in the deck.
 For reproducing the workflow, see the main README's [Studio demo instructions](../README.md#demo-in-studio).
 
-Adding the recording does not change the separately documented evaluation results
-or validation limits.
+The demo is separate from the documented evaluation results and validation limits.
 
 ## Slide coverage
 
@@ -45,20 +44,22 @@ or validation limits.
 The presentation distinguishes user confirmation, submission, human approval and successful
 recording. It does not claim perfect preference matching, complete confidentiality,
 administrator authentication or production/live-provider load capacity. Historical load
-is not presented as a new benchmark. Evaluation figures come from the repository reports;
-creating this deck did not rerun the application's model or load evaluations.
+is not presented as a new benchmark. Evaluation figures come from the repository reports,
+not new model or load evaluations.
 
 ## Screenshot assets
 
-The user removed the bug-related screenshots after those issues were solved and approved
-**all seven current source PNG files in this directory for PowerPoint use**. They are
-presentation assets, not diagnostic bug evidence. The builder uses all seven and verifies
-their SHA-256 hashes before/after building. Originals remain unchanged; embedded crops
-focus on relevant text. Screenshot pictures have descriptive alternative text.
+The seven source PNG assets cover the Studio graph (`agent-diagram.png`), initial
+question (`inital-question.png`), detail confirmation (`confirming-user-info-question.png`
+and `confirming-user-info-answer.png`), administrator review
+(`interrupting-for-admin-review.png`), approval (`admin-approved.png`) and refusal
+(`admin-refuse.png`). The builder uses all seven and verifies their SHA-256 hashes
+before and after building. Originals remain unchanged; embedded crops focus on relevant
+text. Screenshot pictures have descriptive alternative text.
 
 The four-field recording diagram is explicitly a **format template**, not a screenshot
 of an actual output file. The approval image shows the application's successful-recording
-reply. Necessary demo details are visible in the user-approved screenshots.
+reply, not the contents of an output file. Demo details are visible in the screenshots.
 
 ## Previews and validation
 
@@ -69,7 +70,7 @@ Ten offline presentation-specific checks passed, covering:
 
 - Fourteen slides in 16:9, correct author and unique title placeholders.
 - Fourteen embedded notes parts and exported notes, with 600 seconds of suggested timing.
-- All seven approved source images used without modification, with picture alt text.
+- All seven source images used without modification, with picture alt text.
 - Slide bounds, nonoverlapping native text boxes, and fail-fast invalid crop/overflow handling.
 - ZIP integrity, well-formed XML and resolved internal package relationships.
 - Core workflow/scope statements, dated metrics and latency reporting.
@@ -86,7 +87,7 @@ hashes and the rendering limitation.
 
 ## Rebuild or test
 
-The user approved **isolated** `python-pptx` 1.0.2 and Pillow 13.0.0 tooling. The builder
+The builder uses **isolated** `python-pptx` 1.0.2 and Pillow 13.0.0 tooling and
 declares these pins in PEP 723 script metadata. They are not application runtime/dev
 dependencies and do not change `pyproject.toml`, `uv.lock`, the project `.venv`, `.env`,
 or parking databases. Viewing the completed PowerPoint requires neither Python package.
